@@ -120,6 +120,9 @@ export default function Studio() {
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const [chatSubView, setChatSubView] = useState<"room" | "explorer">("room");
   const [explorerDidInput, setExplorerDidInput] = useState("");
+  const [selectedScanRooms, setSelectedScanRooms] = useState<string[]>(["lobby", "technocore", "events"]);
+  const [customScanRoomInput, setCustomScanRoomInput] = useState("");
+  const [scanDepth, setScanDepth] = useState<number>(200);
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [explorerError, setExplorerError] = useState("");
   const [explorerResult, setExplorerResult] = useState<{
@@ -128,6 +131,8 @@ export default function Studio() {
     parsedProfile: { x?: string; profile?: string; mailbox?: string } | null;
     messages: Array<ChatMessage & { room: string }>;
     inspectedAt: string;
+    roomsScanned: string[];
+    totalChecked: number;
   } | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -306,38 +311,79 @@ export default function Studio() {
       let parsedProfile: { x?: string; profile?: string; mailbox?: string } | null = null;
       try {
         const noteRes = await technocore(`/kv/${ns}/${key}`);
-        if (isRecord(noteRes) && typeof noteRes.value === "string") {
-          profileNote = noteRes.value;
-          const parts = profileNote.split(" | ");
+        let rawNote = "";
+        if (typeof noteRes === "string") {
+          rawNote = noteRes.split("\n\n").slice(1).join("\n\n").trim() || noteRes.trim();
+        } else if (isRecord(noteRes) && typeof noteRes.value === "string") {
+          rawNote = noteRes.value;
+        }
+        if (rawNote && !rawNote.startsWith("404 no note")) {
+          profileNote = rawNote;
           parsedProfile = {};
+          const parts = rawNote.split(" | ");
           for (const p of parts) {
-            if (p.startsWith("x: ")) parsedProfile.x = p.replace("x: ", "");
-            if (p.startsWith("profile: ")) parsedProfile.profile = p.replace("profile: ", "");
-            if (p.startsWith("mailbox: ")) parsedProfile.mailbox = p.replace("mailbox: ", "");
+            if (p.startsWith("x: ")) parsedProfile.x = p.replace("x: ", "").trim();
+            if (p.startsWith("profile: ")) parsedProfile.profile = p.replace("profile: ", "").trim();
+            if (p.startsWith("mailbox: ")) parsedProfile.mailbox = p.replace("mailbox: ", "").trim();
           }
         }
       } catch {
         // Profile note might not be published yet
       }
 
-      const roomsToScan = ["lobby", "technocore", "events"];
-      if (parsedProfile?.mailbox && !roomsToScan.includes(parsedProfile.mailbox)) {
-        roomsToScan.push(parsedProfile.mailbox);
+      const customRooms = customScanRoomInput
+        .split(/[,\s]+/)
+        .map((r) => r.toLowerCase().trim().replace(/^#/, "").replace(/^\/r\//, ""))
+        .filter((r) => NAME_PATTERN.test(r));
+
+      const initialRooms = Array.from(new Set([...selectedScanRooms, ...customRooms]));
+      if (parsedProfile?.mailbox && NAME_PATTERN.test(parsedProfile.mailbox)) {
+        initialRooms.push(parsedProfile.mailbox);
+      }
+      const roomsToScan = Array.from(new Set(initialRooms));
+      if (roomsToScan.length === 0) {
+        roomsToScan.push("lobby", "technocore");
       }
 
+      let totalChecked = 0;
       const allFound: Array<ChatMessage & { room: string }> = [];
+
       await Promise.all(
         roomsToScan.map(async (r) => {
           try {
-            const res = await technocore(`/r/${r}?limit=100&format=json`);
-            const parsed = parseChatMessages(res);
-            for (const msg of parsed) {
-              if (msg.from === queryDid) {
-                allFound.push({ ...msg, room: r });
+            const res1 = await technocore(`/r/${r}?limit=200&format=json`);
+            const parsed1 = parseChatMessages(res1);
+            totalChecked += parsed1.length;
+            for (const msg of parsed1) {
+              if (msg.from === queryDid) allFound.push({ ...msg, room: r });
+            }
+
+            if (scanDepth > 200 && isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
+              const pagesNeeded = Math.min(4, Math.ceil((scanDepth - 200) / 200));
+              let currentOldestSeq = res1.first_seq;
+              for (let p = 0; p < pagesNeeded; p++) {
+                if (currentOldestSeq <= 1) break;
+                const sinceSeq = Math.max(0, currentOldestSeq - 201);
+                try {
+                  const resNext = await technocore(`/r/${r}?limit=200&since=${sinceSeq}&format=json`);
+                  const parsedNext = parseChatMessages(resNext);
+                  totalChecked += parsedNext.length;
+                  for (const msg of parsedNext) {
+                    if (msg.from === queryDid) allFound.push({ ...msg, room: r });
+                  }
+                  if (isRecord(resNext) && typeof resNext.first_seq === "number") {
+                    if (resNext.first_seq >= currentOldestSeq) break;
+                    currentOldestSeq = resNext.first_seq;
+                  } else {
+                    break;
+                  }
+                } catch {
+                  break;
+                }
               }
             }
           } catch {
-            // Gracefully ignore room fetch failures
+            // Room scan error handled gracefully
           }
         })
       );
@@ -350,6 +396,8 @@ export default function Studio() {
         parsedProfile,
         messages: allFound,
         inspectedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+        roomsScanned: roomsToScan,
+        totalChecked,
       });
     } catch (err) {
       setExplorerError(err instanceof Error ? err.message : "Failed to inspect DID.");
@@ -1012,8 +1060,9 @@ export default function Studio() {
                   <div className="explorerSearchBox">
                     <div className="composerHead">
                       <span>INSPECT ANY DID KEY ON TECHNOCORE NETWORK</span>
-                      <span>SHARDED NOTE (/kv/did-xx/yy) & CROSS-ROOM SCAN</span>
+                      <span>SHARDED NOTE (/kv/did-xx/yy) & HISTORICAL ROOM SCAN</span>
                     </div>
+
                     <div className="explorerInputRow">
                       <input
                         type="text"
@@ -1041,6 +1090,78 @@ export default function Studio() {
                         {explorerLoading ? "SCANNING NETWORK..." : "INSPECT DID ↗"}
                       </button>
                     </div>
+
+                    {/* Configurable Rooms & Deep Scan Options */}
+                    <div className="explorerOptionsRow">
+                      <div className="explorerOptionBlock">
+                        <label>Target Rooms to Scan</label>
+                        <div className="roomChecksGroup">
+                          {["lobby", "technocore", "events"].map((r) => {
+                            const isSelected = selectedScanRooms.includes(r);
+                            return (
+                              <label key={r} className={`roomCheckPill ${isSelected ? "active" : ""}`}>
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    if (e.target.checked) {
+                                      setSelectedScanRooms((prev) => [...prev, r]);
+                                    } else {
+                                      setSelectedScanRooms((prev) => prev.filter((x) => x !== r));
+                                    }
+                                  }}
+                                />
+                                #{r}
+                              </label>
+                            );
+                          })}
+                          {MAILBOX_PATTERN.test(mailbox) && (
+                            <label className={`roomCheckPill ${selectedScanRooms.includes(mailbox) ? "active" : ""}`}>
+                              <input
+                                type="checkbox"
+                                checked={selectedScanRooms.includes(mailbox)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedScanRooms((prev) => [...prev, mailbox]);
+                                  } else {
+                                    setSelectedScanRooms((prev) => prev.filter((x) => x !== mailbox));
+                                  }
+                                }}
+                              />
+                              #my-mailbox
+                            </label>
+                          )}
+                        </div>
+                      </div>
+
+                      <div className="explorerOptionBlock">
+                        <label>+ Custom Rooms (comma separated)</label>
+                        <input
+                          type="text"
+                          className="customRoomsInput"
+                          value={customScanRoomInput}
+                          onChange={(e) => setCustomScanRoomInput(e.target.value)}
+                          placeholder="e.g. general, alpha, test"
+                        />
+                      </div>
+
+                      <div className="explorerOptionBlock">
+                        <label>Scan Depth per Room</label>
+                        <div className="scanDepthGroup">
+                          {[200, 500, 1000].map((depth) => (
+                            <button
+                              key={depth}
+                              type="button"
+                              className={scanDepth === depth ? "active" : ""}
+                              onClick={() => setScanDepth(depth)}
+                            >
+                              {depth === 200 ? "200 (Fast)" : depth === 500 ? "500 (Deep)" : "1000 (Full)"}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     {explorerError && <p className="notice danger" style={{ margin: 0 }}>{explorerError}</p>}
                   </div>
 
@@ -1052,6 +1173,13 @@ export default function Studio() {
                           <b>{explorerResult.did}</b>
                         </div>
                         <span style={{ color: "var(--muted)" }}>Scanned at {explorerResult.inspectedAt}</span>
+                      </div>
+
+                      {/* Stats Banner */}
+                      <div className="explorerStatsBanner">
+                        <span>ROOMS SCANNED: <b>{explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")}</b></span>
+                        <span>MESSAGES INSPECTED: <b>{explorerResult.totalChecked}</b></span>
+                        <span>MATCHES FOUND: <b>{explorerResult.messages.length}</b></span>
                       </div>
 
                       {/* Profile Metadata */}
@@ -1081,13 +1209,13 @@ export default function Studio() {
                       {/* Cross-Room Messages Feed */}
                       <div className="explorerMessagesSection">
                         <div className="explorerMessagesHead">
-                          <span>MESSAGES FOUND ACROSS #lobby, #technocore, #events ({explorerResult.messages.length})</span>
+                          <span>HISTORICAL MESSAGES FOUND ({explorerResult.messages.length})</span>
                           <span>ORDER: NEWEST FIRST</span>
                         </div>
                         <div className="explorerFeed">
                           {explorerResult.messages.length === 0 ? (
                             <div className="chatEmpty" style={{ minHeight: "140px" }}>
-                              No recent messages found for this DID in major public rooms.
+                              No messages found for this DID in {explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")} (checked {explorerResult.totalChecked} messages). Try adding custom rooms or selecting 500 / 1000 Deep Scan.
                             </div>
                           ) : (
                             explorerResult.messages.map((item) => (

@@ -270,15 +270,32 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 
 /* DID Explorer / Network Inspector */
 .didExplorerWrap { display: grid; gap: 16px; }
-.explorerSearchBox { display: grid; gap: 8px; background: var(--paper); border: 1px solid var(--ink); padding: 16px; }
+.explorerSearchBox { display: grid; gap: 14px; background: var(--paper); border: 1px solid var(--ink); padding: 18px; }
 .explorerInputRow { display: flex; gap: 8px; flex-wrap: wrap; }
 .explorerInputRow input { flex: 1; min-width: 260px; font-family: ui-monospace, monospace; font-size: 11px; }
 .explorerInputRow button { padding: 0 16px; font: 900 10px ui-monospace, monospace; height: 38px; }
 
+.explorerOptionsRow { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; border-top: 1px solid var(--line); padding-top: 12px; }
+.explorerOptionBlock { display: grid; gap: 6px; }
+.explorerOptionBlock label { font: 900 9px ui-monospace, monospace; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+.roomChecksGroup { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.roomCheckPill { display: flex; align-items: center; gap: 5px; padding: 4px 8px; border: 1px solid var(--ink); background: var(--soft); font: 900 9px ui-monospace, monospace; cursor: pointer; user-select: none; }
+.roomCheckPill input { cursor: pointer; margin: 0; }
+.roomCheckPill.active { background: var(--ink); color: var(--bg); }
+
+.customRoomsInput { min-width: 180px; font-size: 10px !important; padding: 4px 8px !important; height: 28px; background: var(--bg); border: 1px solid var(--line); }
+
+.scanDepthGroup { display: flex; gap: 4px; }
+.scanDepthGroup button { padding: 4px 9px; font: 900 9px ui-monospace, monospace; border: 1px solid var(--ink); background: var(--soft); cursor: pointer; }
+.scanDepthGroup button.active { background: var(--ink); color: var(--bg); }
+
+.explorerStatsBanner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: var(--soft); padding: 8px 12px; border: 1px solid var(--line); font: 900 9px ui-monospace, monospace; color: var(--muted); }
+.explorerStatsBanner b { color: var(--ink); }
+
 .explorerResultCard { background: var(--paper); border: 1px solid var(--ink); padding: 18px; display: grid; gap: 14px; }
 .explorerHead { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
 .explorerHead span { font: 900 10px ui-monospace, monospace; color: var(--muted); text-transform: uppercase; }
-.explorerHead b { font: 900 11px ui-monospace, monospace; color: var(--ink); }
+.explorerHead b { font: 900 11px ui-monospace, monospace; color: var(--ink); word-break: break-all; }
 
 .explorerProfileMeta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; background: var(--soft); padding: 12px; border: 1px solid var(--line); }
 .profileMetaItem { display: grid; gap: 3px; }
@@ -288,7 +305,7 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 
 .explorerMessagesSection { display: grid; gap: 8px; }
 .explorerMessagesHead { display: flex; justify-content: space-between; align-items: center; font: 900 10px ui-monospace, monospace; color: var(--muted); }
-.explorerFeed { max-height: 420px; overflow-y: auto; border: 1px solid var(--line); background: #faf8f4; }
+.explorerFeed { max-height: 460px; overflow-y: auto; border: 1px solid var(--line); background: #faf8f4; }
 .roomTag { background: var(--ink); color: var(--bg); padding: 2px 6px; font-size: 8px; font-weight: 900; letter-spacing: .05em; border-radius: 2px; }
 
 /* Fullscreen Mode for Chat */
