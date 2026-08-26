@@ -743,6 +743,7 @@ export default function Studio() {
                 <div className="quickRooms" aria-label="Quick room selection">
                   <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
                   <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
+                  <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
                   {MAILBOX_PATTERN.test(mailbox) && (
                     <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
                   )}
