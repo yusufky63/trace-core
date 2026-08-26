@@ -771,8 +771,8 @@ export default function Studio() {
       <div className="brand">TRACE<span>/</span>CORE</div>
       <div className="topmeta">UNOFFICIAL FLOP ECOSYSTEM UTILITY · LOCAL-FIRST</div>
       <nav className="toplinks" aria-label="Official references">
-        <a href="https://github.com/yusufky63/trace-core" target="_blank" rel="noreferrer">GITHUB ↗</a>
-        <a href="https://x.com/codexsha" target="_blank" rel="noreferrer">@CODEXSHA ↗</a>
+        <a href="https://technocore.chat/llms.txt" target="_blank" rel="noreferrer">PROTOCOL ↗</a>
+        <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">SPEC ↗</a>
       </nav>
     </header>
 
@@ -1456,14 +1456,6 @@ export default function Studio() {
               >
                 {busy === "proof" ? "RECORDING..." : "RECORD SIGNED PROOF"}
               </button>
-              {!proof.contributionUrl && (
-                <button
-                  type="button"
-                  onClick={() => updateProof({ contributionUrl: "https://github.com/yusufky63/trace-core" })}
-                >
-                  USE REPO URL
-                </button>
-              )}
             </div>
 
             <div className="proofPoster">
@@ -1534,9 +1526,6 @@ export default function Studio() {
           <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">FLOP Teaser (Q4 2026 Testnet) ↗</a>
           <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP Specification ↗</a>
           <a href="https://technocore.chat/llms.txt" target="_blank" rel="noreferrer">Technocore Protocol ↗</a>
-          <a href="https://flop.finance/apply/kol" target="_blank" rel="noreferrer">Apply: KOL & Creators Survey ↗</a>
-          <a href="https://flop.finance/apply/miner" target="_blank" rel="noreferrer">Apply: GPU Miner ↗</a>
-          <a href="https://flop.finance/apply/validator" target="_blank" rel="noreferrer">Apply: Validator Node ↗</a>
         </div>
       </div>
       <div className="footerBottom">
