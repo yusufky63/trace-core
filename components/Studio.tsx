@@ -117,6 +117,7 @@ export default function Studio() {
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false);
   
   const [pendingImport, setPendingImport] = useState<IdentityBackup | null>(null);
+  const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatLoadIdRef = useRef(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
@@ -128,6 +129,16 @@ export default function Studio() {
   const profileReady = !!did && MAILBOX_PATTERN.test(mailbox) && validXHandle(xHandle.trim()) && (!profileUrl.trim() || isHttpsUrl(profileUrl.trim()));
   const signalReady = !!seed && roomReady && cleanMessageLength > 0 && cleanMessageLength <= 4096;
   const contributionReady = isHttpsUrl(proof.contributionUrl.trim()) && codePointLength(sweepSingleLine(proof.description)) > 0 && codePointLength(sweepSingleLine(proof.description)) <= 512;
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isChatFullscreen) {
+        setIsChatFullscreen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isChatFullscreen]);
 
   const progress = useMemo(() => {
     let value = 0;
@@ -539,10 +550,8 @@ export default function Studio() {
       <div className="brand">TRACE<span>/</span>CORE</div>
       <div className="topmeta">UNOFFICIAL FLOP ECOSYSTEM UTILITY · LOCAL-FIRST</div>
       <nav className="toplinks" aria-label="Official references">
-        <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">TEASER ↗</a>
-        <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP SPEC ↗</a>
-        <a href="https://technocore.chat/llms.txt" target="_blank" rel="noreferrer">PROTOCOL ↗</a>
-        <a href="https://flop.finance/apply/kol" target="_blank" rel="noreferrer">APPLY (KOL) ↗</a>
+        <a href="https://github.com/yusufky63/trace-core" target="_blank" rel="noreferrer">GITHUB ↗</a>
+        <a href="https://x.com/codexsha" target="_blank" rel="noreferrer">@CODEXSHA ↗</a>
       </nav>
     </header>
 
@@ -718,7 +727,7 @@ export default function Studio() {
         {/* MODE 2: SIGNED CHAT */}
         {activeMode === "chat" && (
           <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms" tabId="tab-chat" wide>
-            <div className="chatContainer">
+            <div className={`chatContainer ${isChatFullscreen ? "fullscreenMode" : ""}`}>
               {/* Row 1: Room Selector & Quick Chips */}
               <div className="chatToolbar">
                 <div className="roomInputWrap">
@@ -738,8 +747,27 @@ export default function Studio() {
                     <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
                   )}
                 </div>
-                <button onClick={() => void loadChat(false, false)} disabled={chatLoading || !roomReady}>
-                  {chatLoading ? "SYNCING..." : "SYNC"}
+                
+                <button
+                  type="button"
+                  className="syncBtn"
+                  onClick={() => void loadChat(false, false)}
+                  disabled={chatLoading || !roomReady}
+                  title="Synchronize room messages"
+                >
+                  <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                  </svg>
+                  <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="expandChatBtn"
+                  onClick={() => setIsChatFullscreen((v) => !v)}
+                  title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
+                >
+                  {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
                 </button>
               </div>
 
@@ -780,50 +808,52 @@ export default function Studio() {
               {chatError && <p className="notice danger" role="alert">{chatError}</p>}
 
               {/* Chat Feed (Taller, High contrast, Responsive) */}
-              <div
-                ref={chatFeedRef}
-                className="chatFeed"
-                onScroll={handleChatScroll}
-                aria-label={`Messages in ${room}`}
-              >
-                {chatLoading && chatMessages.length === 0 ? (
-                  <div className="chatEmpty">Loading room messages...</div>
-                ) : visibleMessages.length === 0 ? (
-                  <div className="chatEmpty">No messages match this filter.</div>
-                ) : (
-                  visibleMessages.map((item) => {
-                    const signed = isSignedMessage(item);
-                    const mine = !!did && item.from === did;
-                    return (
-                      <article
-                        className={`chatMessage ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
-                        key={`${item.seq}-${item.from}`}
-                      >
-                        <div className="messageMeta">
-                          <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
-                            {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
-                          </span>
-                          <code title={item.from}>{shortIdentity(item.from)}</code>
-                          {!item.pending && <span className="seqTag">#{item.seq}</span>}
-                          <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
-                        </div>
-                        <p>{item.text}</p>
-                      </article>
-                    );
-                  })
+              <div className="chatFeedContainer">
+                <div
+                  ref={chatFeedRef}
+                  className="chatFeed"
+                  onScroll={handleChatScroll}
+                  aria-label={`Messages in ${room}`}
+                >
+                  {chatLoading && chatMessages.length === 0 ? (
+                    <div className="chatEmpty">Loading room messages...</div>
+                  ) : visibleMessages.length === 0 ? (
+                    <div className="chatEmpty">No messages match this filter.</div>
+                  ) : (
+                    visibleMessages.map((item) => {
+                      const signed = isSignedMessage(item);
+                      const mine = !!did && item.from === did;
+                      return (
+                        <article
+                          className={`chatMessage ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
+                          key={`${item.seq}-${item.from}`}
+                        >
+                          <div className="messageMeta">
+                            <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
+                              {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
+                            </span>
+                            <code title={item.from}>{shortIdentity(item.from)}</code>
+                            {!item.pending && <span className="seqTag">#{item.seq}</span>}
+                            <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
+                          </div>
+                          <p>{item.text}</p>
+                        </article>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Floating Jump to Bottom Button - Anchored right above composer */}
+                {hasUnreadBelow && (
+                  <button
+                    className="scrollBottomBtn"
+                    onClick={() => scrollToBottom(true)}
+                    aria-label="Scroll to new messages"
+                  >
+                    ↓ NEW MESSAGES
+                  </button>
                 )}
               </div>
-
-              {/* Floating Jump to Bottom Button */}
-              {hasUnreadBelow && (
-                <button
-                  className="scrollBottomBtn"
-                  onClick={() => scrollToBottom(true)}
-                  aria-label="Scroll to new messages"
-                >
-                  ↓ NEW MESSAGES
-                </button>
-              )}
 
               {/* Composer */}
               <div className="composer">
@@ -995,12 +1025,26 @@ export default function Studio() {
     </section>
 
     <footer className="shell footer">
-      <div>TRACE/CORE <span>—</span> FLOP ECOSYSTEM</div>
-      <div className="footerCopy">
+      <div className="footerTop">
+        <div className="footerBrand">
+          <b>TRACE<span>/</span>CORE</b>
+          <span>Local-first identity, live signed chat & verifiable proof studio for Technocore.</span>
+          <div className="authorCredits">
+            Created by <a href="https://x.com/codexsha" target="_blank" rel="noreferrer">@codexsha</a> · <a href="https://github.com/yusufky63/trace-core" target="_blank" rel="noreferrer">GitHub Repo</a>
+          </div>
+        </div>
+        <div className="footerLinksGroup">
+          <span>OFFICIAL PROTOCOL & SPEC</span>
+          <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">FLOP Teaser (Q4 2026 Testnet) ↗</a>
+          <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP Specification ↗</a>
+          <a href="https://technocore.chat/llms.txt" target="_blank" rel="noreferrer">Technocore Protocol ↗</a>
+          <a href="https://flop.finance/apply/kol" target="_blank" rel="noreferrer">Apply: KOL & Creators Survey ↗</a>
+          <a href="https://flop.finance/apply/miner" target="_blank" rel="noreferrer">Apply: GPU Miner ↗</a>
+          <a href="https://flop.finance/apply/validator" target="_blank" rel="noreferrer">Apply: Validator Node ↗</a>
+        </div>
+      </div>
+      <div className="footerBottom">
         <p>Technocore is public, world-writable and ephemeral. Never publish seeds, private keys, API keys, passwords or secrets.</p>
-        <p>
-          <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">FLOP teaser (Q4 2026 testnet)</a> · <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP specification</a> · <a href="https://github.com/flop-labs/technocore-chat" target="_blank" rel="noreferrer">Technocore source</a>
-        </p>
       </div>
     </footer>
   </main>;
@@ -1063,3 +1107,4 @@ function Trail({ done, n, text }: { done: boolean; n: string; text: string }) {
     </div>
   );
 }
+
