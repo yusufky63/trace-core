@@ -87,6 +87,33 @@ async function unlockBackupSeed(backup: IdentityBackup, password: string) {
   }
 }
 
+function parseProfileNote(rawText: string) {
+  const clean = rawText.replace(/^!! UNTRUSTED CONTENT[^\n]*\n+/i, "").trim();
+  if (!clean || clean.startsWith("404 no note")) return null;
+
+  const res: {
+    raw: string;
+    x?: string;
+    profile?: string;
+    mailbox?: string;
+    nick?: string;
+  } = { raw: clean };
+
+  const mbMatch = clean.match(/(?:mailbox:\s*)?(mb-p-[a-f0-9]{16,36})/i);
+  if (mbMatch) res.mailbox = mbMatch[1];
+
+  const xMatch = clean.match(/(?:^|[\s|])(?:x|twitter):\s*@?([A-Za-z0-9_]{1,30})/i);
+  if (xMatch) res.x = xMatch[1];
+
+  const urlMatch = clean.match(/https?:\/\/[^\s|]+/i);
+  if (urlMatch) res.profile = urlMatch[0];
+
+  const nickMatch = clean.match(/(?:^|[\s|])(?:nick|name):\s*([A-Za-z0-9_-]{1,30})/i);
+  if (nickMatch) res.nick = nickMatch[1];
+
+  return res;
+}
+
 export default function Studio() {
   const [activeMode, setActiveMode] = useState<Mode>("start");
   const [did, setDid] = useState("");
@@ -134,7 +161,7 @@ export default function Studio() {
   const [explorerResult, setExplorerResult] = useState<{
     did: string;
     profileNote: string | null;
-    parsedProfile: { x?: string; profile?: string; mailbox?: string } | null;
+    parsedProfile: { raw: string; x?: string; profile?: string; mailbox?: string; nick?: string } | null;
     messages: Array<ChatMessage & { room: string }>;
     inspectedAt: string;
     roomsScanned: string[];
@@ -301,13 +328,22 @@ export default function Studio() {
   }, [activeMode, loadChat, room, roomReady, scrollToBottom]);
 
   useEffect(() => {
-    if (activeMode !== "chat" || !roomReady) return;
+    if (activeMode !== "chat" || chatSubView !== "room" || !roomReady) return;
     void loadChat(true, false);
     const interval = window.setInterval(() => {
-      if (!document.hidden) void loadChat(true, false);
+      if (!document.hidden && activeMode === "chat" && chatSubView === "room") {
+        void loadChat(true, false);
+      }
     }, 6000);
     return () => window.clearInterval(interval);
-  }, [activeMode, loadChat, roomReady]);
+  }, [activeMode, chatSubView, loadChat, roomReady]);
+
+  useEffect(() => {
+    if (activeMode !== "chat" || chatSubView !== "explorer") {
+      scanAbortRef.current = true;
+      setExplorerLoading(false);
+    }
+  }, [activeMode, chatSubView]);
 
   function onStopScan() {
     scanAbortRef.current = true;
@@ -331,7 +367,7 @@ export default function Studio() {
       const key = fp.slice(2);
 
       let profileNote: string | null = null;
-      let parsedProfile: { x?: string; profile?: string; mailbox?: string } | null = null;
+      let parsedProfile: { raw: string; x?: string; profile?: string; mailbox?: string; nick?: string } | null = null;
       try {
         const noteRes = await technocore(`/kv/${ns}/${key}`);
         let rawNote = "";
@@ -340,14 +376,11 @@ export default function Studio() {
         } else if (isRecord(noteRes) && typeof noteRes.value === "string") {
           rawNote = noteRes.value;
         }
-        if (rawNote && !rawNote.startsWith("404 no note")) {
-          profileNote = rawNote;
-          parsedProfile = {};
-          const parts = rawNote.split(" | ");
-          for (const p of parts) {
-            if (p.startsWith("x: ")) parsedProfile.x = p.replace("x: ", "").trim();
-            if (p.startsWith("profile: ")) parsedProfile.profile = p.replace("profile: ", "").trim();
-            if (p.startsWith("mailbox: ")) parsedProfile.mailbox = p.replace("mailbox: ", "").trim();
+        if (rawNote) {
+          const parsed = parseProfileNote(rawNote);
+          if (parsed) {
+            profileNote = parsed.raw;
+            parsedProfile = parsed;
           }
         }
       } catch {
@@ -385,65 +418,71 @@ export default function Studio() {
         isDone: false,
       });
 
+      const normalizedTarget = queryDid.toLowerCase();
+
       for (const r of roomsToScan) {
         if (scanAbortRef.current) break;
         setScanProgress((prev) => prev ? { ...prev, currentRoom: `#${r}` } : null);
 
         try {
-          const res1 = await technocore(`/r/${r}?limit=200&format=json`);
-          const parsed1 = parseChatMessages(res1);
-          const found1 = parsed1.filter((m) => m.from === queryDid).map((m) => ({ ...m, room: r }));
+          // 1. Fetch latest tail (up to 200 messages)
+          const resLatest = await technocore(`/r/${r}?limit=200&format=json`);
+          const parsedLatest = parseChatMessages(resLatest);
+          const foundLatest = parsedLatest
+            .filter((m) => m.from.trim().toLowerCase() === normalizedTarget)
+            .map((m) => ({ ...m, room: r }));
 
           setExplorerResult((prev) => {
             if (!prev) return prev;
             const existing = new Map<string, ChatMessage & { room: string }>();
             for (const m of prev.messages) existing.set(`${m.room}-${m.seq}`, m);
-            for (const m of found1) existing.set(`${m.room}-${m.seq}`, m);
+            for (const m of foundLatest) existing.set(`${m.room}-${m.seq}`, m);
             const merged = Array.from(existing.values()).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-            return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsed1.length };
+            return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsedLatest.length };
           });
 
           setScanProgress((prev) => prev ? {
             ...prev,
-            scannedCount: prev.scannedCount + parsed1.length,
-            matchesCount: prev.matchesCount + found1.length,
+            scannedCount: prev.scannedCount + parsedLatest.length,
+            matchesCount: prev.matchesCount + foundLatest.length,
           } : null);
 
-          if (isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
-            const pagesNeeded = 5;
-            let currentOldestSeq = res1.first_seq;
-            for (let p = 0; p < pagesNeeded; p++) {
-              if (scanAbortRef.current || currentOldestSeq <= 1) break;
-              const sinceSeq = Math.max(0, currentOldestSeq - 201);
-              try {
-                const resNext = await technocore(`/r/${r}?limit=200&since=${sinceSeq}&format=json`);
-                const parsedNext = parseChatMessages(resNext);
-                const foundNext = parsedNext.filter((m) => m.from === queryDid).map((m) => ({ ...m, room: r }));
+          // 2. Scan entire historical ring buffer starting from since=0
+          let currentSince = 0;
+          const maxBufferPages = 25; // Up to 5,000 historical messages per room
+          for (let p = 0; p < maxBufferPages; p++) {
+            if (scanAbortRef.current) break;
+            try {
+              const resNext = await technocore(`/r/${r}?limit=200&since=${currentSince}&format=json`);
+              const parsedNext = parseChatMessages(resNext);
+              if (parsedNext.length === 0) break;
+              const foundNext = parsedNext
+                .filter((m) => m.from.trim().toLowerCase() === normalizedTarget)
+                .map((m) => ({ ...m, room: r }));
 
-                setExplorerResult((prev) => {
-                  if (!prev) return prev;
-                  const existing = new Map<string, ChatMessage & { room: string }>();
-                  for (const m of prev.messages) existing.set(`${m.room}-${m.seq}`, m);
-                  for (const m of foundNext) existing.set(`${m.room}-${m.seq}`, m);
-                  const merged = Array.from(existing.values()).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-                  return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsedNext.length };
-                });
+              setExplorerResult((prev) => {
+                if (!prev) return prev;
+                const existing = new Map<string, ChatMessage & { room: string }>();
+                for (const m of prev.messages) existing.set(`${m.room}-${m.seq}`, m);
+                for (const m of foundNext) existing.set(`${m.room}-${m.seq}`, m);
+                const merged = Array.from(existing.values()).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+                return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsedNext.length };
+              });
 
-                setScanProgress((prev) => prev ? {
-                  ...prev,
-                  scannedCount: prev.scannedCount + parsedNext.length,
-                  matchesCount: prev.matchesCount + foundNext.length,
-                } : null);
+              setScanProgress((prev) => prev ? {
+                ...prev,
+                scannedCount: prev.scannedCount + parsedNext.length,
+                matchesCount: prev.matchesCount + foundNext.length,
+              } : null);
 
-                if (isRecord(resNext) && typeof resNext.first_seq === "number") {
-                  if (resNext.first_seq >= currentOldestSeq) break;
-                  currentOldestSeq = resNext.first_seq;
-                } else {
-                  break;
-                }
-              } catch {
+              if (isRecord(resNext) && typeof resNext.last_seq === "number") {
+                if (resNext.last_seq <= currentSince || parsedNext.length < 200) break;
+                currentSince = resNext.last_seq;
+              } else {
                 break;
               }
+            } catch {
+              break;
             }
           }
         } catch {
@@ -930,7 +969,6 @@ export default function Studio() {
                     setChatSubView("explorer");
                     if (did && !explorerDidInput) {
                       setExplorerDidInput(did);
-                      void onInspectDid(did);
                     }
                   }}
                 >
@@ -1273,7 +1311,11 @@ export default function Studio() {
                       <div className="explorerProfileMeta">
                         <div className="profileMetaItem">
                           <small>X (TWITTER)</small>
-                          <span>{explorerResult.parsedProfile?.x ? `@${explorerResult.parsedProfile.x}` : "—"}</span>
+                          {explorerResult.parsedProfile?.x ? (
+                            <a href={`https://x.com/${explorerResult.parsedProfile.x.replace(/^@/, "")}`} target="_blank" rel="noreferrer">
+                              @{explorerResult.parsedProfile.x.replace(/^@/, "")}
+                            </a>
+                          ) : <span>—</span>}
                         </div>
                         <div className="profileMetaItem">
                           <small>PROFILE / GITHUB</small>

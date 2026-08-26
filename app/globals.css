@@ -331,6 +331,7 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 .profileMetaItem span, .profileMetaItem a { font: 11px ui-monospace, monospace; color: var(--ink); word-break: break-all; font-weight: 600; }
 .profileMetaItem a { color: var(--accent); text-decoration: underline; }
 
+
 .explorerMessagesSection { display: grid; gap: 10px; }
 .explorerMessagesHead { display: flex; justify-content: space-between; align-items: center; font: 900 10px ui-monospace, monospace; color: var(--muted); border-bottom: 1px solid var(--line); padding-bottom: 6px; }
 .explorerFeed { max-height: 480px; overflow-y: auto; border: 1px solid var(--line); background: #faf8f4; }

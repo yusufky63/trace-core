@@ -137,13 +137,44 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const upstream = await fetch(`${ORIGIN}${path}`, {
-      method,
-      headers: method === "POST" ? { "content-type": "application/json" } : undefined,
-      body: method === "POST" ? JSON.stringify(data.body) : undefined,
-      cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
-    });
+    const headersObj: Record<string, string> = {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 TRACE-CORE/1.0",
+      "accept": "application/json, text/plain, */*",
+    };
+    if (method === "POST") {
+      headersObj["content-type"] = "application/json";
+    }
+
+    let upstream: Response | null = null;
+    let lastError: unknown = null;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        upstream = await fetch(`${ORIGIN}${path}`, {
+          method,
+          headers: headersObj,
+          body: method === "POST" ? JSON.stringify(data.body) : undefined,
+          cache: "no-store",
+          signal: AbortSignal.timeout(10_000),
+        });
+
+        if ([502, 503, 504].includes(upstream.status) && attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+          continue;
+        }
+        break;
+      } catch (err) {
+        lastError = err;
+        if (attempt < 3) {
+          await new Promise((resolve) => setTimeout(resolve, attempt * 300));
+        }
+      }
+    }
+
+    if (!upstream) {
+      const msg = lastError instanceof Error ? lastError.message : "Technocore upstream unreachable.";
+      return NextResponse.json({ error: msg }, { status: 503 });
+    }
 
     const text = await upstream.text();
     const contentType = upstream.headers.get("content-type") || "text/plain; charset=utf-8";
