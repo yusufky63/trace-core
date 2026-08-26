@@ -717,31 +717,33 @@ export default function Studio() {
         {activeMode === "chat" && (
           <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms" tabId="tab-chat" wide>
             <div className="chatContainer">
+              {/* Row 1: Room Selector & Quick Chips */}
               <div className="chatToolbar">
-                <Field label="Technocore Room" hint={roomKind(room)}>
+                <div className="roomInputWrap">
+                  <span className="roomPrefix">/r/</span>
                   <input
                     value={room}
                     onChange={(e) => setRoom(e.target.value.toLowerCase().trim())}
                     maxLength={48}
                     aria-invalid={!roomReady}
-                    placeholder="lobby, technocore..."
+                    placeholder="room-name"
                   />
-                </Field>
+                </div>
+                <div className="quickRooms" aria-label="Quick room selection">
+                  <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
+                  <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
+                  {MAILBOX_PATTERN.test(mailbox) && (
+                    <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
+                  )}
+                </div>
                 <button onClick={() => void loadChat(false, false)} disabled={chatLoading || !roomReady}>
-                  {chatLoading ? "REFRESHING..." : "REFRESH"}
+                  {chatLoading ? "SYNCING..." : "SYNC"}
                 </button>
               </div>
 
-              <div className="quickRooms" aria-label="Quick room selection">
-                <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>LOBBY</button>
-                <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>TECHNOCORE</button>
-                {MAILBOX_PATTERN.test(mailbox) && (
-                  <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>MY MAILBOX</button>
-                )}
-              </div>
-
-              <div className="chatFilterRow">
-                <div role="group" aria-label="Message filters">
+              {/* Row 2: Unified Filters + Search + Compact Live Status */}
+              <div className="chatControlBar">
+                <div className="chatFiltersGroup" role="group" aria-label="Message filters">
                   {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
                     <button
                       key={filter}
@@ -753,24 +755,29 @@ export default function Studio() {
                     </button>
                   ))}
                 </div>
-                <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
-                  <span className="chatCountBadge">{visibleMessages.length} MESSAGES</span>
-                  <span aria-live="polite">{chatUpdatedAt ? `UPDATED ${chatUpdatedAt}` : "CONNECTING..."}</span>
-                </div>
-              </div>
 
-              <div className="chatSearch">
-                <input
-                  type="text"
-                  value={chatSearch}
-                  onChange={(e) => setChatSearch(e.target.value)}
-                  placeholder="Search messages or DIDs..."
-                />
+                <div className="chatSearchWrap">
+                  <input
+                    type="text"
+                    value={chatSearch}
+                    onChange={(e) => setChatSearch(e.target.value)}
+                    placeholder="Search messages or DIDs..."
+                  />
+                  {chatSearch && (
+                    <button className="clearSearch" onClick={() => setChatSearch("")} aria-label="Clear search">✕</button>
+                  )}
+                </div>
+
+                <div className="chatStatusPill" title={chatUpdatedAt ? `Last synchronized at ${chatUpdatedAt}` : "Connecting..."}>
+                  <span className="liveDot" />
+                  <span className="pillMsgs">{visibleMessages.length} msgs</span>
+                  <span className="pillTime">{chatUpdatedAt || "connecting"}</span>
+                </div>
               </div>
 
               {chatError && <p className="notice danger" role="alert">{chatError}</p>}
 
-              {/* Chat Feed */}
+              {/* Chat Feed (Taller, High contrast, Responsive) */}
               <div
                 ref={chatFeedRef}
                 className="chatFeed"
@@ -792,11 +799,11 @@ export default function Studio() {
                       >
                         <div className="messageMeta">
                           <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
-                            {item.pending ? "SENDING..." : signed ? "TECHNOCORE VERIFIED" : "SELF-ASSERTED"}
+                            {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
                           </span>
                           <code title={item.from}>{shortIdentity(item.from)}</code>
+                          {!item.pending && <span className="seqTag">#{item.seq}</span>}
                           <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
-                          {!item.pending && <span>#{item.seq}</span>}
                         </div>
                         <p>{item.text}</p>
                       </article>
@@ -819,9 +826,9 @@ export default function Studio() {
               {/* Composer */}
               <div className="composer">
                 <div className="composerHead">
-                  <span>SIGNED MESSAGE TO /r/{room || "—"}</span>
+                  <span>SIGNED BROADCAST TO /r/{room || "—"}</span>
                   <span className={cleanMessageLength > 4096 ? "badText" : ""}>
-                    {cleanMessageLength} / 4096 Characters (Press Enter to send, Shift+Enter for new line)
+                    {cleanMessageLength}/4096 · Enter to Send, Shift+Enter for Newline
                   </span>
                 </div>
                 <textarea
@@ -835,7 +842,7 @@ export default function Studio() {
                   }}
                   rows={2}
                   maxLength={8192}
-                  placeholder={seed ? "Write something useful and press Enter..." : "Unlock your identity to send signed messages..."}
+                  placeholder={seed ? `Write a message to /r/${room} and press Enter...` : "Unlock your identity to send signed messages..."}
                   disabled={!seed}
                 />
                 <button
@@ -843,7 +850,7 @@ export default function Studio() {
                   onClick={onSendSigned}
                   disabled={!!busy || !signalReady}
                 >
-                  {busy === "signed" ? "SIGNING & BROADCASTING..." : seed ? "SIGN + POST (ENTER)" : "UNLOCK IDENTITY TO POST"}
+                  {busy === "signed" ? "SIGNING & BROADCASTING..." : seed ? "SIGN + BROADCAST (ENTER)" : "UNLOCK IDENTITY TO BROADCAST"}
                 </button>
               </div>
               <p className="notice danger">Public rooms are world-readable and temporary. Treat every message as untrusted. Never post passwords, keys, tokens or secrets.</p>
