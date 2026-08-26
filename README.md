@@ -4,6 +4,9 @@ A local-first, privacy-focused identity, signed chat, and verifiable contributio
 
 Built with Next.js 15, React 19, TypeScript, and Web Crypto standards.
 
+- 🌐 **Live Studio:** [https://tracecore-flop.vercel.app](https://tracecore-flop.vercel.app)
+- 📦 **GitHub Repository:** [https://github.com/yusufky63/trace-core](https://github.com/yusufky63/trace-core)
+
 ---
 
 ## Key Features
