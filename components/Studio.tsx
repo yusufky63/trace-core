@@ -122,7 +122,6 @@ export default function Studio() {
   const [explorerDidInput, setExplorerDidInput] = useState("");
   const [selectedScanRooms, setSelectedScanRooms] = useState<string[]>(["lobby", "technocore", "events"]);
   const [customScanRoomInput, setCustomScanRoomInput] = useState("");
-  const [scanDepth, setScanDepth] = useState<number>(200);
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [explorerError, setExplorerError] = useState("");
   const [scanProgress, setScanProgress] = useState<{
@@ -147,6 +146,15 @@ export default function Studio() {
   const chatFeedRef = useRef<HTMLDivElement>(null);
   const isNearBottomRef = useRef(true);
   const currentRoomRef = useRef(room);
+
+  const copyToClipboard = useCallback(async (text: string, label = "Item") => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setFeedback({ ok: true, text: `Copied ${label} to clipboard!` });
+    } catch {
+      setFeedback({ ok: false, text: "Failed to copy to clipboard." });
+    }
+  }, []);
 
   const cleanMessageLength = codePointLength(sweepSingleLine(message));
   const roomReady = NAME_PATTERN.test(room);
@@ -401,8 +409,8 @@ export default function Studio() {
             matchesCount: prev.matchesCount + found1.length,
           } : null);
 
-          if (scanDepth > 200 && isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
-            const pagesNeeded = Math.min(4, Math.ceil((scanDepth - 200) / 200));
+          if (isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
+            const pagesNeeded = 5;
             let currentOldestSeq = res1.first_seq;
             for (let p = 0; p < pagesNeeded; p++) {
               if (scanAbortRef.current || currentOldestSeq <= 1) break;
@@ -1044,7 +1052,13 @@ export default function Studio() {
                                 <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
                                   {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
                                 </span>
-                                <code title={item.from}>{shortIdentity(item.from)}</code>
+                                <code
+                                  className="clickableDid"
+                                  onClick={() => void copyToClipboard(item.from, "DID")}
+                                  title="Click to copy full DID"
+                                >
+                                  {shortIdentity(item.from)}
+                                </code>
                                 {!item.pending && <span className="seqTag">#{item.seq}</span>}
                                 <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
                               </div>
@@ -1136,7 +1150,7 @@ export default function Studio() {
                       </button>
                     </div>
 
-                    {/* Configurable Rooms & Deep Scan Options */}
+                    {/* Room Selection */}
                     <div className="explorerOptionsRow">
                       <div className="explorerOptionBlock">
                         <label>Target Rooms to Scan</label>
@@ -1189,22 +1203,6 @@ export default function Studio() {
                           placeholder="e.g. general, alpha, test"
                         />
                       </div>
-
-                      <div className="explorerOptionBlock">
-                        <label>Scan Depth per Room</label>
-                        <div className="scanDepthGroup">
-                          {[200, 500, 1000].map((depth) => (
-                            <button
-                              key={depth}
-                              type="button"
-                              className={scanDepth === depth ? "active" : ""}
-                              onClick={() => setScanDepth(depth)}
-                            >
-                              {depth === 200 ? "200 (Fast)" : depth === 500 ? "500 (Deep)" : "1000 (Full)"}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
                     </div>
 
                     {explorerError && <p className="notice danger" style={{ margin: 0 }}>{explorerError}</p>}
@@ -1229,22 +1227,49 @@ export default function Studio() {
 
                   {explorerResult && (
                     <div className="explorerResultCard">
+                      {/* Top Header Card */}
                       <div className="explorerHead">
-                        <div>
+                        <div className="explorerTargetDidBlock">
                           <span>TARGET DID</span>
-                          <b>{explorerResult.did}</b>
+                          <code>{explorerResult.did}</code>
                         </div>
-                        <span style={{ color: "var(--muted)" }}>Scanned at {explorerResult.inspectedAt}</span>
+                        <div className="explorerMetaActions">
+                          <button
+                            type="button"
+                            className="copyPillBtn"
+                            onClick={() => void copyToClipboard(explorerResult.did, "DID")}
+                          >
+                            📋 COPY DID
+                          </button>
+                          <span style={{ color: "var(--muted)", fontSize: "10px", fontWeight: 700 }}>
+                            Scanned at {explorerResult.inspectedAt}
+                          </span>
+                        </div>
                       </div>
 
-                      {/* Stats Banner */}
-                      <div className="explorerStatsBanner">
-                        <span>ROOMS SCANNED: <b>{explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")}</b></span>
-                        <span>MESSAGES INSPECTED: <b>{explorerResult.totalChecked.toLocaleString()}</b></span>
-                        <span>MATCHES FOUND: <b>{explorerResult.messages.length}</b></span>
+                      {/* 3-Box Metrics Grid */}
+                      <div className="explorerMetricsGrid">
+                        <div className="metricBox">
+                          <small>ROOMS SCANNED</small>
+                          <div className="scannedRoomPills">
+                            {explorerResult.roomsScanned.map((r) => (
+                              <span key={r} className="scannedRoomPill">#{r}</span>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="metricBox">
+                          <small>MESSAGES INSPECTED</small>
+                          <b>{explorerResult.totalChecked.toLocaleString()}</b>
+                        </div>
+                        <div className="metricBox">
+                          <small>MATCHES FOUND</small>
+                          <b style={{ color: explorerResult.messages.length > 0 ? "var(--accent)" : "inherit" }}>
+                            {explorerResult.messages.length}
+                          </b>
+                        </div>
                       </div>
 
-                      {/* Profile Metadata */}
+                      {/* Profile Coordinates Grid */}
                       <div className="explorerProfileMeta">
                         <div className="profileMetaItem">
                           <small>X (TWITTER)</small>
@@ -1260,7 +1285,15 @@ export default function Studio() {
                         </div>
                         <div className="profileMetaItem">
                           <small>UNLISTED MAILBOX</small>
-                          <span>{explorerResult.parsedProfile?.mailbox || "—"}</span>
+                          {explorerResult.parsedProfile?.mailbox ? (
+                            <span
+                              className="clickableDid"
+                              onClick={() => void copyToClipboard(explorerResult.parsedProfile?.mailbox || "", "Mailbox")}
+                              title="Click to copy mailbox name"
+                            >
+                              {explorerResult.parsedProfile.mailbox} 📋
+                            </span>
+                          ) : <span>—</span>}
                         </div>
                         <div className="profileMetaItem">
                           <small>PROFILE KV NOTE</small>
@@ -1277,7 +1310,7 @@ export default function Studio() {
                         <div className="explorerFeed">
                           {explorerResult.messages.length === 0 ? (
                             <div className="chatEmpty" style={{ minHeight: "140px" }}>
-                              No messages found for this DID in {explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")} (checked {explorerResult.totalChecked} messages). Try adding custom rooms or selecting 500 / 1000 Deep Scan.
+                              No messages found for this DID in {explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")} (checked {explorerResult.totalChecked.toLocaleString()} messages).
                             </div>
                           ) : (
                             explorerResult.messages.map((item) => (
@@ -1287,6 +1320,13 @@ export default function Studio() {
                                   <span className={`trustBadge ${isSignedMessage(item) ? "signed" : "unsigned"}`}>
                                     {isSignedMessage(item) ? "VERIFIED" : "UNSIGNED"}
                                   </span>
+                                  <code
+                                    className="clickableDid"
+                                    onClick={() => void copyToClipboard(item.from, "DID")}
+                                    title="Click to copy DID"
+                                  >
+                                    {shortIdentity(item.from)}
+                                  </code>
                                   <span className="seqTag">#{item.seq}</span>
                                   <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
                                 </div>
