@@ -728,7 +728,7 @@ export default function Studio() {
         {activeMode === "chat" && (
           <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms" tabId="tab-chat" wide>
             <div className={`chatContainer ${isChatFullscreen ? "fullscreenMode" : ""}`}>
-              {/* Row 1: Room Selector & Quick Chips */}
+              {/* Row 1: Room Selector & Action Buttons */}
               <div className="chatToolbar">
                 <div className="roomInputWrap">
                   <span className="roomPrefix">/r/</span>
@@ -740,7 +740,36 @@ export default function Studio() {
                     placeholder="room-name"
                   />
                 </div>
-                <div className="quickRooms" aria-label="Quick room selection">
+                
+                <div className="chatToolbarActions">
+                  <button
+                    type="button"
+                    className="syncBtn"
+                    onClick={() => void loadChat(false, false)}
+                    disabled={chatLoading || !roomReady}
+                    title="Synchronize room messages"
+                  >
+                    <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                    </svg>
+                    <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    className="expandChatBtn"
+                    onClick={() => setIsChatFullscreen((v) => !v)}
+                    title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
+                  >
+                    {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
+                  </button>
+                </div>
+              </div>
+
+              {/* Row 2: Dedicated Quick Room Chips */}
+              <div className="chatPillsRow" aria-label="Quick room selection">
+                <span className="pillsLabel">ROOMS:</span>
+                <div className="quickRooms">
                   <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
                   <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
                   <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
@@ -748,31 +777,9 @@ export default function Studio() {
                     <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
                   )}
                 </div>
-                
-                <button
-                  type="button"
-                  className="syncBtn"
-                  onClick={() => void loadChat(false, false)}
-                  disabled={chatLoading || !roomReady}
-                  title="Synchronize room messages"
-                >
-                  <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                  </svg>
-                  <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="expandChatBtn"
-                  onClick={() => setIsChatFullscreen((v) => !v)}
-                  title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
-                >
-                  {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
-                </button>
               </div>
 
-              {/* Row 2: Unified Filters + Search + Compact Live Status */}
+              {/* Row 3: Unified Filters + Search + Compact Live Status */}
               <div className="chatControlBar">
                 <div className="chatFiltersGroup" role="group" aria-label="Message filters">
                   {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
