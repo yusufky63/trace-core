@@ -118,6 +118,18 @@ export default function Studio() {
   
   const [pendingImport, setPendingImport] = useState<IdentityBackup | null>(null);
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
+  const [chatSubView, setChatSubView] = useState<"room" | "explorer">("room");
+  const [explorerDidInput, setExplorerDidInput] = useState("");
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const [explorerError, setExplorerError] = useState("");
+  const [explorerResult, setExplorerResult] = useState<{
+    did: string;
+    profileNote: string | null;
+    parsedProfile: { x?: string; profile?: string; mailbox?: string } | null;
+    messages: Array<ChatMessage & { room: string }>;
+    inspectedAt: string;
+  } | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatLoadIdRef = useRef(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
@@ -276,6 +288,75 @@ export default function Studio() {
     }, 6000);
     return () => window.clearInterval(interval);
   }, [activeMode, loadChat, roomReady]);
+
+  async function onInspectDid(targetDid?: string) {
+    const queryDid = (targetDid || explorerDidInput).trim();
+    if (!DID_PATTERN.test(queryDid)) {
+      setExplorerError("Please enter a valid Ed25519 did:key (e.g. did:key:z6Mk...)");
+      return;
+    }
+    setExplorerError("");
+    setExplorerLoading(true);
+    try {
+      const fp = await didFingerprint(queryDid);
+      const ns = `did-${fp.slice(0, 2)}`;
+      const key = fp.slice(2);
+
+      let profileNote: string | null = null;
+      let parsedProfile: { x?: string; profile?: string; mailbox?: string } | null = null;
+      try {
+        const noteRes = await technocore(`/kv/${ns}/${key}`);
+        if (isRecord(noteRes) && typeof noteRes.value === "string") {
+          profileNote = noteRes.value;
+          const parts = profileNote.split(" | ");
+          parsedProfile = {};
+          for (const p of parts) {
+            if (p.startsWith("x: ")) parsedProfile.x = p.replace("x: ", "");
+            if (p.startsWith("profile: ")) parsedProfile.profile = p.replace("profile: ", "");
+            if (p.startsWith("mailbox: ")) parsedProfile.mailbox = p.replace("mailbox: ", "");
+          }
+        }
+      } catch {
+        // Profile note might not be published yet
+      }
+
+      const roomsToScan = ["lobby", "technocore", "events"];
+      if (parsedProfile?.mailbox && !roomsToScan.includes(parsedProfile.mailbox)) {
+        roomsToScan.push(parsedProfile.mailbox);
+      }
+
+      const allFound: Array<ChatMessage & { room: string }> = [];
+      await Promise.all(
+        roomsToScan.map(async (r) => {
+          try {
+            const res = await technocore(`/r/${r}?limit=100&format=json`);
+            const parsed = parseChatMessages(res);
+            for (const msg of parsed) {
+              if (msg.from === queryDid) {
+                allFound.push({ ...msg, room: r });
+              }
+            }
+          } catch {
+            // Gracefully ignore room fetch failures
+          }
+        })
+      );
+
+      allFound.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+
+      setExplorerResult({
+        did: queryDid,
+        profileNote,
+        parsedProfile,
+        messages: allFound,
+        inspectedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
+      });
+    } catch (err) {
+      setExplorerError(err instanceof Error ? err.message : "Failed to inspect DID.");
+    } finally {
+      setExplorerLoading(false);
+    }
+  }
 
   function readStoredBackup() {
     const raw = localStorage.getItem(STORAGE_KEY) ?? localStorage.getItem(LEGACY_STORAGE_KEY);
@@ -724,176 +805,311 @@ export default function Studio() {
           </ModePanel>
         )}
 
-        {/* MODE 2: SIGNED CHAT */}
+        {/* MODE 2: SIGNED CHAT & DID EXPLORER */}
         {activeMode === "chat" && (
-          <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms" tabId="tab-chat" wide>
+          <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms & DID Explorer" tabId="tab-chat" wide>
             <div className={`chatContainer ${isChatFullscreen ? "fullscreenMode" : ""}`}>
-              {/* Row 1: Room Selector & Action Buttons */}
-              <div className="chatToolbar">
-                <div className="roomInputWrap">
-                  <span className="roomPrefix">/r/</span>
-                  <input
-                    value={room}
-                    onChange={(e) => setRoom(e.target.value.toLowerCase().trim())}
-                    maxLength={48}
-                    aria-invalid={!roomReady}
-                    placeholder="room-name"
-                  />
-                </div>
-                
-                <div className="chatToolbarActions">
-                  <button
-                    type="button"
-                    className="syncBtn"
-                    onClick={() => void loadChat(false, false)}
-                    disabled={chatLoading || !roomReady}
-                    title="Synchronize room messages"
-                  >
-                    <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                    </svg>
-                    <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    className="expandChatBtn"
-                    onClick={() => setIsChatFullscreen((v) => !v)}
-                    title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
-                  >
-                    {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Row 2: Dedicated Quick Room Chips */}
-              <div className="chatPillsRow" aria-label="Quick room selection">
-                <span className="pillsLabel">ROOMS:</span>
-                <div className="quickRooms">
-                  <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
-                  <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
-                  <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
-                  {MAILBOX_PATTERN.test(mailbox) && (
-                    <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
-                  )}
-                </div>
-              </div>
-
-              {/* Row 3: Unified Filters + Search + Compact Live Status */}
-              <div className="chatControlBar">
-                <div className="chatFiltersGroup" role="group" aria-label="Message filters">
-                  {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
-                    <button
-                      key={filter}
-                      className={chatFilter === filter ? "active" : ""}
-                      onClick={() => setChatFilter(filter)}
-                      disabled={filter === "mine" && !did}
-                    >
-                      {filter === "all" ? "ALL" : filter === "signed" ? "SIGNED ONLY" : "MY MESSAGES"}
-                    </button>
-                  ))}
-                </div>
-
-                <div className="chatSearchWrap">
-                  <input
-                    type="text"
-                    value={chatSearch}
-                    onChange={(e) => setChatSearch(e.target.value)}
-                    placeholder="Search messages or DIDs..."
-                  />
-                  {chatSearch && (
-                    <button className="clearSearch" onClick={() => setChatSearch("")} aria-label="Clear search">✕</button>
-                  )}
-                </div>
-
-                <div className="chatStatusPill" title={chatUpdatedAt ? `Last synchronized at ${chatUpdatedAt}` : "Connecting..."}>
-                  <span className="liveDot" />
-                  <span className="pillMsgs">{visibleMessages.length} msgs</span>
-                  <span className="pillTime">{chatUpdatedAt || "connecting"}</span>
-                </div>
-              </div>
-
-              {chatError && <p className="notice danger" role="alert">{chatError}</p>}
-
-              {/* Chat Feed (Taller, High contrast, Responsive) */}
-              <div className="chatFeedContainer">
-                <div
-                  ref={chatFeedRef}
-                  className="chatFeed"
-                  onScroll={handleChatScroll}
-                  aria-label={`Messages in ${room}`}
+              {/* Sub Navigation Switcher */}
+              <div className="chatSubNav" role="tablist" aria-label="Chat and Explorer views">
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={chatSubView === "room"}
+                  className={chatSubView === "room" ? "active" : ""}
+                  onClick={() => setChatSubView("room")}
                 >
-                  {chatLoading && chatMessages.length === 0 ? (
-                    <div className="chatEmpty">Loading room messages...</div>
-                  ) : visibleMessages.length === 0 ? (
-                    <div className="chatEmpty">No messages match this filter.</div>
-                  ) : (
-                    visibleMessages.map((item) => {
-                      const signed = isSignedMessage(item);
-                      const mine = !!did && item.from === did;
-                      return (
-                        <article
-                          className={`chatMessage ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
-                          key={`${item.seq}-${item.from}`}
-                        >
-                          <div className="messageMeta">
-                            <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
-                              {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
-                            </span>
-                            <code title={item.from}>{shortIdentity(item.from)}</code>
-                            {!item.pending && <span className="seqTag">#{item.seq}</span>}
-                            <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
-                          </div>
-                          <p>{item.text}</p>
-                        </article>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* Floating Jump to Bottom Button - Anchored right above composer */}
-                {hasUnreadBelow && (
-                  <button
-                    className="scrollBottomBtn"
-                    onClick={() => scrollToBottom(true)}
-                    aria-label="Scroll to new messages"
-                  >
-                    ↓ NEW MESSAGES
-                  </button>
-                )}
-              </div>
-
-              {/* Composer */}
-              <div className="composer">
-                <div className="composerHead">
-                  <span>SIGNED BROADCAST TO /r/{room || "—"}</span>
-                  <span className={cleanMessageLength > 4096 ? "badText" : ""}>
-                    {cleanMessageLength}/4096 · Enter to Send, Shift+Enter for Newline
-                  </span>
-                </div>
-                <textarea
-                  value={message}
-                  onChange={(e) => setMessage(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !e.shiftKey) {
-                      e.preventDefault();
-                      void onSendSigned();
+                  ● LIVE ROOM (/r/{room})
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={chatSubView === "explorer"}
+                  className={chatSubView === "explorer" ? "active" : ""}
+                  onClick={() => {
+                    setChatSubView("explorer");
+                    if (did && !explorerDidInput) {
+                      setExplorerDidInput(did);
+                      void onInspectDid(did);
                     }
                   }}
-                  rows={2}
-                  maxLength={8192}
-                  placeholder={seed ? `Write a message to /r/${room} and press Enter...` : "Unlock your identity to send signed messages..."}
-                  disabled={!seed}
-                />
-                <button
-                  className="primary full"
-                  onClick={onSendSigned}
-                  disabled={!!busy || !signalReady}
                 >
-                  {busy === "signed" ? "SIGNING & BROADCASTING..." : seed ? "SIGN + BROADCAST (ENTER)" : "UNLOCK IDENTITY TO BROADCAST"}
+                  🔍 DID EXPLORER & MESSAGE HISTORY
                 </button>
               </div>
-              <p className="notice danger">Public rooms are world-readable and temporary. Treat every message as untrusted. Never post passwords, keys, tokens or secrets.</p>
+
+              {chatSubView === "room" ? (
+                <>
+                  {/* Row 1: Room Selector & Action Buttons */}
+                  <div className="chatToolbar">
+                    <div className="roomInputWrap">
+                      <span className="roomPrefix">/r/</span>
+                      <input
+                        value={room}
+                        onChange={(e) => setRoom(e.target.value.toLowerCase().trim())}
+                        maxLength={48}
+                        aria-invalid={!roomReady}
+                        placeholder="room-name"
+                      />
+                    </div>
+                    
+                    <div className="chatToolbarActions">
+                      <button
+                        type="button"
+                        className="syncBtn"
+                        onClick={() => void loadChat(false, false)}
+                        disabled={chatLoading || !roomReady}
+                        title="Synchronize room messages"
+                      >
+                        <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                        </svg>
+                        <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        className="expandChatBtn"
+                        onClick={() => setIsChatFullscreen((v) => !v)}
+                        title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
+                      >
+                        {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Row 2: Dedicated Quick Room Chips */}
+                  <div className="chatPillsRow" aria-label="Quick room selection">
+                    <span className="pillsLabel">ROOMS:</span>
+                    <div className="quickRooms">
+                      <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
+                      <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
+                      <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
+                      {MAILBOX_PATTERN.test(mailbox) && (
+                        <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Row 3: Unified Filters + Search + Compact Live Status */}
+                  <div className="chatControlBar">
+                    <div className="chatFiltersGroup" role="group" aria-label="Message filters">
+                      {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
+                        <button
+                          key={filter}
+                          className={chatFilter === filter ? "active" : ""}
+                          onClick={() => setChatFilter(filter)}
+                          disabled={filter === "mine" && !did}
+                        >
+                          {filter === "all" ? "ALL" : filter === "signed" ? "SIGNED ONLY" : "MY MESSAGES"}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="chatSearchWrap">
+                      <input
+                        type="text"
+                        value={chatSearch}
+                        onChange={(e) => setChatSearch(e.target.value)}
+                        placeholder="Search messages or DIDs..."
+                      />
+                      {chatSearch && (
+                        <button className="clearSearch" onClick={() => setChatSearch("")} aria-label="Clear search">✕</button>
+                      )}
+                    </div>
+
+                    <div className="chatStatusPill" title={chatUpdatedAt ? `Last synchronized at ${chatUpdatedAt}` : "Connecting..."}>
+                      <span className="liveDot" />
+                      <span className="pillMsgs">{visibleMessages.length} msgs</span>
+                      <span className="pillTime">{chatUpdatedAt || "connecting"}</span>
+                    </div>
+                  </div>
+
+                  {chatError && <p className="notice danger" role="alert">{chatError}</p>}
+
+                  {/* Chat Feed (Taller, High contrast, Responsive) */}
+                  <div className="chatFeedContainer">
+                    <div
+                      ref={chatFeedRef}
+                      className="chatFeed"
+                      onScroll={handleChatScroll}
+                      aria-label={`Messages in ${room}`}
+                    >
+                      {chatLoading && chatMessages.length === 0 ? (
+                        <div className="chatEmpty">Loading room messages...</div>
+                      ) : visibleMessages.length === 0 ? (
+                        <div className="chatEmpty">No messages match this filter.</div>
+                      ) : (
+                        visibleMessages.map((item) => {
+                          const signed = isSignedMessage(item);
+                          const mine = !!did && item.from === did;
+                          return (
+                            <article
+                              className={`chatMessage ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
+                              key={`${item.seq}-${item.from}`}
+                            >
+                              <div className="messageMeta">
+                                <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
+                                  {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
+                                </span>
+                                <code title={item.from}>{shortIdentity(item.from)}</code>
+                                {!item.pending && <span className="seqTag">#{item.seq}</span>}
+                                <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
+                              </div>
+                              <p>{item.text}</p>
+                            </article>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {/* Floating Jump to Bottom Button - Anchored right above composer */}
+                    {hasUnreadBelow && (
+                      <button
+                        className="scrollBottomBtn"
+                        onClick={() => scrollToBottom(true)}
+                        aria-label="Scroll to new messages"
+                      >
+                        ↓ NEW MESSAGES
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Composer */}
+                  <div className="composer">
+                    <div className="composerHead">
+                      <span>SIGNED BROADCAST TO /r/{room || "—"}</span>
+                      <span className={cleanMessageLength > 4096 ? "badText" : ""}>
+                        {cleanMessageLength}/4096 · Enter to Send, Shift+Enter for Newline
+                      </span>
+                    </div>
+                    <textarea
+                      value={message}
+                      onChange={(e) => setMessage(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          void onSendSigned();
+                        }
+                      }}
+                      rows={2}
+                      maxLength={8192}
+                      placeholder={seed ? `Write a message to /r/${room} and press Enter...` : "Unlock your identity to send signed messages..."}
+                      disabled={!seed}
+                    />
+                    <button
+                      className="primary full"
+                      onClick={onSendSigned}
+                      disabled={!!busy || !signalReady}
+                    >
+                      {busy === "signed" ? "SIGNING & BROADCASTING..." : seed ? "SIGN + BROADCAST (ENTER)" : "UNLOCK IDENTITY TO BROADCAST"}
+                    </button>
+                  </div>
+                  <p className="notice danger">Public rooms are world-readable and temporary. Treat every message as untrusted. Never post passwords, keys, tokens or secrets.</p>
+                </>
+              ) : (
+                /* DID EXPLORER / NETWORK INSPECTOR VIEW */
+                <div className="didExplorerWrap">
+                  <div className="explorerSearchBox">
+                    <div className="composerHead">
+                      <span>INSPECT ANY DID KEY ON TECHNOCORE NETWORK</span>
+                      <span>SHARDED NOTE (/kv/did-xx/yy) & CROSS-ROOM SCAN</span>
+                    </div>
+                    <div className="explorerInputRow">
+                      <input
+                        type="text"
+                        value={explorerDidInput}
+                        onChange={(e) => setExplorerDidInput(e.target.value.trim())}
+                        placeholder="did:key:z6Mk... (Paste any agent or user DID)"
+                      />
+                      {did && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setExplorerDidInput(did);
+                            void onInspectDid(did);
+                          }}
+                        >
+                          USE MY DID
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="primary"
+                        disabled={explorerLoading || !explorerDidInput}
+                        onClick={() => void onInspectDid()}
+                      >
+                        {explorerLoading ? "SCANNING NETWORK..." : "INSPECT DID ↗"}
+                      </button>
+                    </div>
+                    {explorerError && <p className="notice danger" style={{ margin: 0 }}>{explorerError}</p>}
+                  </div>
+
+                  {explorerResult && (
+                    <div className="explorerResultCard">
+                      <div className="explorerHead">
+                        <div>
+                          <span>TARGET DID</span>
+                          <b>{explorerResult.did}</b>
+                        </div>
+                        <span style={{ color: "var(--muted)" }}>Scanned at {explorerResult.inspectedAt}</span>
+                      </div>
+
+                      {/* Profile Metadata */}
+                      <div className="explorerProfileMeta">
+                        <div className="profileMetaItem">
+                          <small>X (TWITTER)</small>
+                          <span>{explorerResult.parsedProfile?.x ? `@${explorerResult.parsedProfile.x}` : "—"}</span>
+                        </div>
+                        <div className="profileMetaItem">
+                          <small>PROFILE / GITHUB</small>
+                          {explorerResult.parsedProfile?.profile ? (
+                            <a href={explorerResult.parsedProfile.profile} target="_blank" rel="noreferrer">
+                              {explorerResult.parsedProfile.profile}
+                            </a>
+                          ) : <span>—</span>}
+                        </div>
+                        <div className="profileMetaItem">
+                          <small>UNLISTED MAILBOX</small>
+                          <span>{explorerResult.parsedProfile?.mailbox || "—"}</span>
+                        </div>
+                        <div className="profileMetaItem">
+                          <small>PROFILE KV NOTE</small>
+                          <span>{explorerResult.profileNote ? "PUBLISHED ✓" : "NOT PUBLISHED"}</span>
+                        </div>
+                      </div>
+
+                      {/* Cross-Room Messages Feed */}
+                      <div className="explorerMessagesSection">
+                        <div className="explorerMessagesHead">
+                          <span>MESSAGES FOUND ACROSS #lobby, #technocore, #events ({explorerResult.messages.length})</span>
+                          <span>ORDER: NEWEST FIRST</span>
+                        </div>
+                        <div className="explorerFeed">
+                          {explorerResult.messages.length === 0 ? (
+                            <div className="chatEmpty" style={{ minHeight: "140px" }}>
+                              No recent messages found for this DID in major public rooms.
+                            </div>
+                          ) : (
+                            explorerResult.messages.map((item) => (
+                              <article className="chatMessage" key={`exp-${item.room}-${item.seq}-${item.ts}`}>
+                                <div className="messageMeta">
+                                  <span className="roomTag">/r/{item.room}</span>
+                                  <span className={`trustBadge ${isSignedMessage(item) ? "signed" : "unsigned"}`}>
+                                    {isSignedMessage(item) ? "VERIFIED" : "UNSIGNED"}
+                                  </span>
+                                  <span className="seqTag">#{item.seq}</span>
+                                  <time dateTime={item.ts}>{formatChatTime(item.ts)}</time>
+                                </div>
+                                <p>{item.text}</p>
+                              </article>
+                            ))
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           </ModePanel>
         )}

@@ -261,6 +261,36 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 
 .chatContainer { position: relative; display: grid; gap: 10px; }
 
+/* Sub navigation inside Chat Panel */
+.chatSubNav { display: flex; border-bottom: 1px solid var(--ink); margin-bottom: 6px; background: var(--soft); }
+.chatSubNav button { flex: 1; padding: 11px 16px; font: 900 10px ui-monospace, monospace; border: 0; border-right: 1px solid var(--line); background: transparent; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.15s ease; }
+.chatSubNav button:last-child { border-right: 0; }
+.chatSubNav button.active { background: var(--paper); color: var(--ink); box-shadow: inset 0 -2px 0 var(--accent); }
+.chatSubNav button:hover:not(.active) { background: #e4e2d8; }
+
+/* DID Explorer / Network Inspector */
+.didExplorerWrap { display: grid; gap: 16px; }
+.explorerSearchBox { display: grid; gap: 8px; background: var(--paper); border: 1px solid var(--ink); padding: 16px; }
+.explorerInputRow { display: flex; gap: 8px; flex-wrap: wrap; }
+.explorerInputRow input { flex: 1; min-width: 260px; font-family: ui-monospace, monospace; font-size: 11px; }
+.explorerInputRow button { padding: 0 16px; font: 900 10px ui-monospace, monospace; height: 38px; }
+
+.explorerResultCard { background: var(--paper); border: 1px solid var(--ink); padding: 18px; display: grid; gap: 14px; }
+.explorerHead { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+.explorerHead span { font: 900 10px ui-monospace, monospace; color: var(--muted); text-transform: uppercase; }
+.explorerHead b { font: 900 11px ui-monospace, monospace; color: var(--ink); }
+
+.explorerProfileMeta { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; background: var(--soft); padding: 12px; border: 1px solid var(--line); }
+.profileMetaItem { display: grid; gap: 3px; }
+.profileMetaItem small { font: 900 8px ui-monospace, monospace; color: var(--muted); text-transform: uppercase; }
+.profileMetaItem span, .profileMetaItem a { font: 11px ui-monospace, monospace; color: var(--ink); word-break: break-all; }
+.profileMetaItem a { color: var(--accent); }
+
+.explorerMessagesSection { display: grid; gap: 8px; }
+.explorerMessagesHead { display: flex; justify-content: space-between; align-items: center; font: 900 10px ui-monospace, monospace; color: var(--muted); }
+.explorerFeed { max-height: 420px; overflow-y: auto; border: 1px solid var(--line); background: #faf8f4; }
+.roomTag { background: var(--ink); color: var(--bg); padding: 2px 6px; font-size: 8px; font-weight: 900; letter-spacing: .05em; border-radius: 2px; }
+
 /* Fullscreen Mode for Chat */
 .chatContainer.fullscreenMode {
   position: fixed;
