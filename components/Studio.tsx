@@ -116,6 +116,7 @@ export default function Studio() {
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [hasUnreadBelow, setHasUnreadBelow] = useState(false);
   
+  const [pendingImport, setPendingImport] = useState<IdentityBackup | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatLoadIdRef = useRef(0);
   const chatFeedRef = useRef<HTMLDivElement>(null);
@@ -284,6 +285,7 @@ export default function Studio() {
     setCreatedAt(backup.createdAt);
     setPassword("");
     setReplaceArmed(false);
+    setPendingImport(null);
     setActiveMode("chat");
   }
 
@@ -334,23 +336,42 @@ export default function Studio() {
     });
   }
 
+  async function onUnlockPendingImport() {
+    if (!pendingImport) return;
+    if (!password) {
+      setFeedback({ ok: false, text: "Please enter the password for this backup file." });
+      return;
+    }
+    await run("import", async () => {
+      hydrateBackup(pendingImport, await unlockBackupSeed(pendingImport, password));
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      setFeedback({ ok: true, text: `Backup verified and restored: ${shortIdentity(pendingImport.vault.did)}` });
+      log("IMPORT", `${pendingImport.vault.did} · backup verified and restored`);
+    });
+  }
+
   async function onImportVault(file: File | undefined) {
     if (!file) return;
     await run("import", async () => {
       if (file.size > 128_000) throw new Error("Backup file is unexpectedly large.");
       const backup = parseIdentityBackup(JSON.parse(await file.text()));
-      hydrateBackup(backup, await unlockBackupSeed(backup, password));
-      localStorage.removeItem(LEGACY_STORAGE_KEY);
-      setFeedback({ ok: true, text: `Backup verified and restored: ${shortIdentity(backup.vault.did)}` });
-      log("IMPORT", `${backup.vault.did} · backup verified and restored`);
+      if (password) {
+        try {
+          hydrateBackup(backup, await unlockBackupSeed(backup, password));
+          localStorage.removeItem(LEGACY_STORAGE_KEY);
+          setFeedback({ ok: true, text: `Backup verified and restored: ${shortIdentity(backup.vault.did)}` });
+          log("IMPORT", `${backup.vault.did} · backup verified and restored`);
+          return;
+        } catch {
+          // If current typed password fails, keep pendingImport so user can enter the correct password
+        }
+      }
+      setPendingImport(backup);
+      setFeedback({ ok: false, text: `Backup loaded for ${shortIdentity(backup.vault.did)}. Enter its password to decrypt.` });
     });
   }
 
   function chooseBackup() {
-    if (password.length < 8) {
-      setFeedback({ ok: false, text: "Enter the backup password first (at least 8 characters), then select the JSON file." });
-      return;
-    }
     fileInputRef.current?.click();
   }
 
@@ -561,8 +582,36 @@ export default function Studio() {
         {/* MODE 1: START / IDENTITY */}
         {activeMode === "start" && (
           <ModePanel id="start" title="IDENTITY VAULT" eyebrow="Local-First Vault & DID" tabId="tab-start">
-            {/* STATE 1: UNLOCKED ACTIVE SESSION */}
-            {seed && did ? (
+            {/* STATE 0: PENDING IMPORT UNLOCK */}
+            {pendingImport ? (
+              <div className="vaultCard highlight">
+                <div className="vaultCardHead">
+                  <span>DECRYPT IMPORTED BACKUP</span>
+                  <b>{shortIdentity(pendingImport.vault.did)}</b>
+                </div>
+                <p className="notice">
+                  Selected backup file is ready. Enter the password you used when creating this backup file to decrypt and restore it.
+                </p>
+                <form onSubmit={(e) => { e.preventDefault(); void onUnlockPendingImport(); }}>
+                  <Field label="Backup Password" hint="Password for this JSON file">
+                    <input
+                      type="password"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••••••"
+                      autoFocus
+                    />
+                  </Field>
+                  <div className="buttonRow" style={{ marginTop: "14px" }}>
+                    <button type="submit" className="primary" disabled={!!busy || !password}>
+                      {busy === "import" ? "DECRYPTING..." : "DECRYPT & RESTORE"}
+                    </button>
+                    <button type="button" onClick={() => setPendingImport(null)}>CANCEL</button>
+                  </div>
+                </form>
+              </div>
+            ) : seed && did ? (
+              /* STATE 1: UNLOCKED ACTIVE SESSION */
               <div className="vaultActiveBanner">
                 <div className="vaultActiveHead">
                   <span /> SESSION ACTIVE — IDENTITY UNLOCKED
@@ -643,7 +692,7 @@ export default function Studio() {
                   <button className="primary" onClick={onCreateIdentity} disabled={!!busy || password.length < 8}>
                     {busy === "identity" ? "CREATING..." : "CREATE NEW DID"}
                   </button>
-                  <button onClick={chooseBackup} disabled={!!busy || password.length < 8}>
+                  <button onClick={chooseBackup} disabled={!!busy}>
                     IMPORT BACKUP JSON
                   </button>
                 </div>

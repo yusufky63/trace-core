@@ -256,49 +256,48 @@ export function createIdentityBackup(
 }
 
 export function parseIdentityBackup(value: unknown): IdentityBackup {
-  const legacyVault = isRecord(value) && value.version === 1 && "ciphertext" in value ? parseVault(value) : null;
-  if (legacyVault) {
-    const now = new Date().toISOString();
-    return createIdentityBackup(
-      legacyVault,
-      { mailbox: "", xHandle: "", profileUrl: "" },
-      { profilePublishedAt: null, signedMessageAt: null, proofRecordedAt: null },
-      null,
-      now
-    );
+  if (!isRecord(value)) {
+    throw new Error("Invalid JSON file: Expected a JSON object.");
   }
-  if (!isRecord(value) || value.format !== "trace-core.identity-backup" || value.version !== 2) {
-    throw new Error("Unsupported TRACE/CORE backup format.");
+  if (value.schema === "trace-core.contribution-proof/v1" || ("signed_message" in value && "contribution" in value)) {
+    throw new Error("The selected file is a Public Proof file (`trace-core-public-proof.json`), not an Encrypted Identity Backup (`trace-core-identity-backup.json`).");
   }
-  const vault = parseVault(value.vault);
-  const rawProfile = isRecord(value.profile) ? value.profile : {};
-  const mailbox = stringOrEmpty(rawProfile.mailbox, 48);
-  if (mailbox && !MAILBOX_PATTERN.test(mailbox)) throw new Error("Backup contains an invalid private mailbox name.");
-  const profile: IdentityProfile = {
-    mailbox,
-    xHandle: stringOrEmpty(rawProfile.xHandle, 64),
-    profileUrl: stringOrEmpty(rawProfile.profileUrl, 2048),
-  };
-  const rawActivity = isRecord(value.activity) ? value.activity : {};
-  const activity: IdentityActivity = {
-    profilePublishedAt: nullableDate(rawActivity.profilePublishedAt),
-    signedMessageAt: nullableDate(rawActivity.signedMessageAt),
-    proofRecordedAt: nullableDate(rawActivity.proofRecordedAt),
-  };
-  const createdAt = typeof value.createdAt === "string" && !Number.isNaN(Date.parse(value.createdAt))
-    ? value.createdAt
-    : new Date().toISOString();
-  return {
-    format: "trace-core.identity-backup",
-    version: 2,
-    vault,
-    profile,
-    activity,
-    lastProof: parseProof(value.lastProof, vault.did),
-    createdAt,
-    updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : createdAt,
-  };
+
+  // 1. Direct raw vault format
+  const rawVault = (value.version === 1 && "ciphertext" in value) ? value : isRecord(value.vault) ? value.vault : null;
+  if (rawVault) {
+    const vault = parseVault(rawVault);
+    const rawProfile = isRecord(value.profile) ? value.profile : {};
+    const mailbox = stringOrEmpty(rawProfile.mailbox, 48);
+    const profile: IdentityProfile = {
+      mailbox: (mailbox && MAILBOX_PATTERN.test(mailbox)) ? mailbox : "",
+      xHandle: stringOrEmpty(rawProfile.xHandle, 64),
+      profileUrl: stringOrEmpty(rawProfile.profileUrl, 2048),
+    };
+    const rawActivity = isRecord(value.activity) ? value.activity : {};
+    const activity: IdentityActivity = {
+      profilePublishedAt: nullableDate(rawActivity.profilePublishedAt),
+      signedMessageAt: nullableDate(rawActivity.signedMessageAt),
+      proofRecordedAt: nullableDate(rawActivity.proofRecordedAt),
+    };
+    const createdAt = typeof value.createdAt === "string" && !Number.isNaN(Date.parse(value.createdAt))
+      ? value.createdAt
+      : new Date().toISOString();
+    return {
+      format: "trace-core.identity-backup",
+      version: 2,
+      vault,
+      profile,
+      activity,
+      lastProof: parseProof(value.lastProof, vault.did),
+      createdAt,
+      updatedAt: typeof value.updatedAt === "string" ? value.updatedAt : createdAt,
+    };
+  }
+
+  throw new Error("Unrecognized backup format. Please select a valid TRACE/CORE identity backup JSON file.");
 }
+
 
 export function nextRoomNonce(did: string, room: string) {
   const storageKey = "trace-core-nonces-v1";
