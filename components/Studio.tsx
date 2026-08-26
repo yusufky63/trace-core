@@ -539,8 +539,10 @@ export default function Studio() {
       <div className="brand">TRACE<span>/</span>CORE</div>
       <div className="topmeta">UNOFFICIAL FLOP ECOSYSTEM UTILITY · LOCAL-FIRST</div>
       <nav className="toplinks" aria-label="Official references">
+        <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">TEASER ↗</a>
         <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP SPEC ↗</a>
         <a href="https://technocore.chat/llms.txt" target="_blank" rel="noreferrer">PROTOCOL ↗</a>
+        <a href="https://flop.finance/apply/kol" target="_blank" rel="noreferrer">APPLY (KOL) ↗</a>
       </nav>
     </header>
 
@@ -865,15 +867,15 @@ export default function Studio() {
             <p className="notice">
               Information entered here is <strong>automatically synced to your encrypted local vault</strong>. It will be restored whenever you unlock your session.
             </p>
-            <Field label="X (Twitter) Handle" hint="Optional · @handle">
+            <Field label="X (Twitter) Handle" hint="Optional · e.g. @handle">
               <input
                 value={xHandle}
                 onChange={(e) => updateProfileField("xHandle", e.target.value)}
-                placeholder="@handle"
-                maxLength={31}
+                placeholder="@yourhandle"
+                maxLength={64}
               />
             </Field>
-            <Field label="Public Profile / GitHub URL" hint="Optional · HTTPS only">
+            <Field label="Public Profile / GitHub URL" hint="Optional · HTTPS link to your profile">
               <input
                 type="url"
                 value={profileUrl}
@@ -920,13 +922,23 @@ export default function Studio() {
                 placeholder="Built a useful Technocore tool for the FLOP ecosystem..."
               />
             </Field>
-            <button
-              className="primary full"
-              onClick={onRecordProof}
-              disabled={!!busy || !seed || !contributionReady}
-            >
-              {busy === "proof" ? "RECORDING..." : "RECORD SIGNED PROOF"}
-            </button>
+            <div className="buttonRow">
+              <button
+                className="primary"
+                onClick={onRecordProof}
+                disabled={!!busy || !seed || !contributionReady}
+              >
+                {busy === "proof" ? "RECORDING..." : "RECORD SIGNED PROOF"}
+              </button>
+              {!proof.contributionUrl && (
+                <button
+                  type="button"
+                  onClick={() => updateProof({ contributionUrl: "https://github.com/yusufky63/trace-core" })}
+                >
+                  USE REPO URL
+                </button>
+              )}
+            </div>
 
             <div className="proofPoster">
               <span>VERIFIABLE PUBLIC TRAIL</span>
@@ -986,7 +998,9 @@ export default function Studio() {
       <div>TRACE/CORE <span>—</span> FLOP ECOSYSTEM</div>
       <div className="footerCopy">
         <p>Technocore is public, world-writable and ephemeral. Never publish seeds, private keys, API keys, passwords or secrets.</p>
-        <p><a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP specification</a> · <a href="https://github.com/flop-labs/technocore-chat" target="_blank" rel="noreferrer">Technocore source</a></p>
+        <p>
+          <a href="https://flop.finance/teaser/" target="_blank" rel="noreferrer">FLOP teaser (Q4 2026 testnet)</a> · <a href="https://flop.finance/llms.txt" target="_blank" rel="noreferrer">FLOP specification</a> · <a href="https://github.com/flop-labs/technocore-chat" target="_blank" rel="noreferrer">Technocore source</a>
+        </p>
       </div>
     </footer>
   </main>;
@@ -1023,11 +1037,19 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 }
 
 function CodeValue({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    void navigator.clipboard.writeText(value);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
   return (
     <div className="codeValue">
       <span>{label}</span>
       <code>{value}</code>
-      <button onClick={() => navigator.clipboard.writeText(value)}>COPY</button>
+      <button onClick={handleCopy}>{copied ? "COPIED ✓" : "COPY"}</button>
     </div>
   );
 }
