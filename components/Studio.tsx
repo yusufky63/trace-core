@@ -125,6 +125,13 @@ export default function Studio() {
   const [scanDepth, setScanDepth] = useState<number>(200);
   const [explorerLoading, setExplorerLoading] = useState(false);
   const [explorerError, setExplorerError] = useState("");
+  const [scanProgress, setScanProgress] = useState<{
+    currentRoom: string;
+    scannedCount: number;
+    matchesCount: number;
+    isDone: boolean;
+  } | null>(null);
+  const scanAbortRef = useRef(false);
   const [explorerResult, setExplorerResult] = useState<{
     did: string;
     profileNote: string | null;
@@ -294,6 +301,12 @@ export default function Studio() {
     return () => window.clearInterval(interval);
   }, [activeMode, loadChat, roomReady]);
 
+  function onStopScan() {
+    scanAbortRef.current = true;
+    setExplorerLoading(false);
+    setScanProgress((prev) => prev ? { ...prev, isDone: true } : null);
+  }
+
   async function onInspectDid(targetDid?: string) {
     const queryDid = (targetDid || explorerDidInput).trim();
     if (!DID_PATTERN.test(queryDid)) {
@@ -302,6 +315,8 @@ export default function Studio() {
     }
     setExplorerError("");
     setExplorerLoading(true);
+    scanAbortRef.current = false;
+
     try {
       const fp = await didFingerprint(queryDid);
       const ns = `did-${fp.slice(0, 2)}`;
@@ -345,60 +360,90 @@ export default function Studio() {
         roomsToScan.push("lobby", "technocore");
       }
 
-      let totalChecked = 0;
-      const allFound: Array<ChatMessage & { room: string }> = [];
-
-      await Promise.all(
-        roomsToScan.map(async (r) => {
-          try {
-            const res1 = await technocore(`/r/${r}?limit=200&format=json`);
-            const parsed1 = parseChatMessages(res1);
-            totalChecked += parsed1.length;
-            for (const msg of parsed1) {
-              if (msg.from === queryDid) allFound.push({ ...msg, room: r });
-            }
-
-            if (scanDepth > 200 && isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
-              const pagesNeeded = Math.min(4, Math.ceil((scanDepth - 200) / 200));
-              let currentOldestSeq = res1.first_seq;
-              for (let p = 0; p < pagesNeeded; p++) {
-                if (currentOldestSeq <= 1) break;
-                const sinceSeq = Math.max(0, currentOldestSeq - 201);
-                try {
-                  const resNext = await technocore(`/r/${r}?limit=200&since=${sinceSeq}&format=json`);
-                  const parsedNext = parseChatMessages(resNext);
-                  totalChecked += parsedNext.length;
-                  for (const msg of parsedNext) {
-                    if (msg.from === queryDid) allFound.push({ ...msg, room: r });
-                  }
-                  if (isRecord(resNext) && typeof resNext.first_seq === "number") {
-                    if (resNext.first_seq >= currentOldestSeq) break;
-                    currentOldestSeq = resNext.first_seq;
-                  } else {
-                    break;
-                  }
-                } catch {
-                  break;
-                }
-              }
-            }
-          } catch {
-            // Room scan error handled gracefully
-          }
-        })
-      );
-
-      allFound.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-
       setExplorerResult({
         did: queryDid,
         profileNote,
         parsedProfile,
-        messages: allFound,
+        messages: [],
         inspectedAt: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
         roomsScanned: roomsToScan,
-        totalChecked,
+        totalChecked: 0,
       });
+
+      setScanProgress({
+        currentRoom: `Initializing scan across ${roomsToScan.length} room(s)...`,
+        scannedCount: 0,
+        matchesCount: 0,
+        isDone: false,
+      });
+
+      for (const r of roomsToScan) {
+        if (scanAbortRef.current) break;
+        setScanProgress((prev) => prev ? { ...prev, currentRoom: `#${r}` } : null);
+
+        try {
+          const res1 = await technocore(`/r/${r}?limit=200&format=json`);
+          const parsed1 = parseChatMessages(res1);
+          const found1 = parsed1.filter((m) => m.from === queryDid).map((m) => ({ ...m, room: r }));
+
+          setExplorerResult((prev) => {
+            if (!prev) return prev;
+            const existing = new Map<string, ChatMessage & { room: string }>();
+            for (const m of prev.messages) existing.set(`${m.room}-${m.seq}`, m);
+            for (const m of found1) existing.set(`${m.room}-${m.seq}`, m);
+            const merged = Array.from(existing.values()).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+            return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsed1.length };
+          });
+
+          setScanProgress((prev) => prev ? {
+            ...prev,
+            scannedCount: prev.scannedCount + parsed1.length,
+            matchesCount: prev.matchesCount + found1.length,
+          } : null);
+
+          if (scanDepth > 200 && isRecord(res1) && typeof res1.first_seq === "number" && res1.first_seq > 1) {
+            const pagesNeeded = Math.min(4, Math.ceil((scanDepth - 200) / 200));
+            let currentOldestSeq = res1.first_seq;
+            for (let p = 0; p < pagesNeeded; p++) {
+              if (scanAbortRef.current || currentOldestSeq <= 1) break;
+              const sinceSeq = Math.max(0, currentOldestSeq - 201);
+              try {
+                const resNext = await technocore(`/r/${r}?limit=200&since=${sinceSeq}&format=json`);
+                const parsedNext = parseChatMessages(resNext);
+                const foundNext = parsedNext.filter((m) => m.from === queryDid).map((m) => ({ ...m, room: r }));
+
+                setExplorerResult((prev) => {
+                  if (!prev) return prev;
+                  const existing = new Map<string, ChatMessage & { room: string }>();
+                  for (const m of prev.messages) existing.set(`${m.room}-${m.seq}`, m);
+                  for (const m of foundNext) existing.set(`${m.room}-${m.seq}`, m);
+                  const merged = Array.from(existing.values()).sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+                  return { ...prev, messages: merged, totalChecked: prev.totalChecked + parsedNext.length };
+                });
+
+                setScanProgress((prev) => prev ? {
+                  ...prev,
+                  scannedCount: prev.scannedCount + parsedNext.length,
+                  matchesCount: prev.matchesCount + foundNext.length,
+                } : null);
+
+                if (isRecord(resNext) && typeof resNext.first_seq === "number") {
+                  if (resNext.first_seq >= currentOldestSeq) break;
+                  currentOldestSeq = resNext.first_seq;
+                } else {
+                  break;
+                }
+              } catch {
+                break;
+              }
+            }
+          }
+        } catch {
+          // Room scan error handled gracefully
+        }
+      }
+
+      setScanProgress((prev) => prev ? { ...prev, isDone: true } : null);
     } catch (err) {
       setExplorerError(err instanceof Error ? err.message : "Failed to inspect DID.");
     } finally {
@@ -1165,6 +1210,23 @@ export default function Studio() {
                     {explorerError && <p className="notice danger" style={{ margin: 0 }}>{explorerError}</p>}
                   </div>
 
+                  {/* Live Progressive Scan Banner */}
+                  {scanProgress && !scanProgress.isDone && (
+                    <div className="liveScanningBanner" role="status">
+                      <div className="scanningInfo">
+                        <span className="pulseDot" />
+                        <span>SCANNING: <b>{scanProgress.currentRoom}</b></span>
+                        <span>·</span>
+                        <span>{scanProgress.scannedCount.toLocaleString()} messages checked</span>
+                        <span>·</span>
+                        <span><b>{scanProgress.matchesCount}</b> matches found</span>
+                      </div>
+                      <button type="button" className="stopScanBtn" onClick={onStopScan}>
+                        ■ STOP SCAN
+                      </button>
+                    </div>
+                  )}
+
                   {explorerResult && (
                     <div className="explorerResultCard">
                       <div className="explorerHead">
@@ -1178,7 +1240,7 @@ export default function Studio() {
                       {/* Stats Banner */}
                       <div className="explorerStatsBanner">
                         <span>ROOMS SCANNED: <b>{explorerResult.roomsScanned.map((r) => `#${r}`).join(", ")}</b></span>
-                        <span>MESSAGES INSPECTED: <b>{explorerResult.totalChecked}</b></span>
+                        <span>MESSAGES INSPECTED: <b>{explorerResult.totalChecked.toLocaleString()}</b></span>
                         <span>MATCHES FOUND: <b>{explorerResult.messages.length}</b></span>
                       </div>
 

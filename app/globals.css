@@ -287,10 +287,26 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 
 .scanDepthGroup { display: flex; gap: 4px; }
 .scanDepthGroup button { padding: 4px 9px; font: 900 9px ui-monospace, monospace; border: 1px solid var(--ink); background: var(--soft); cursor: pointer; }
-.scanDepthGroup button.active { background: var(--ink); color: var(--bg); }
-
 .explorerStatsBanner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; background: var(--soft); padding: 8px 12px; border: 1px solid var(--line); font: 900 9px ui-monospace, monospace; color: var(--muted); }
 .explorerStatsBanner b { color: var(--ink); }
+
+/* Live Progressive Scanning Banner */
+.liveScanningBanner { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; background: #fffbe6; border: 1px solid var(--accent); padding: 10px 14px; font: 900 10px ui-monospace, monospace; color: #874d00; animation: pulseGlow 2s infinite ease-in-out; }
+.scanningInfo { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pulseDot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); animation: pulseDotAnim 0.8s infinite alternate; }
+.stopScanBtn { background: #b42c20; color: #fff; border: 1px solid var(--ink); padding: 5px 12px; font: 900 9px ui-monospace, monospace; cursor: pointer; }
+.stopScanBtn:hover { background: #8e1c12; }
+
+@keyframes pulseGlow {
+  0% { box-shadow: 0 0 0 rgba(224, 90, 43, 0.1); }
+  50% { box-shadow: 0 0 8px rgba(224, 90, 43, 0.3); }
+  100% { box-shadow: 0 0 0 rgba(224, 90, 43, 0.1); }
+}
+
+@keyframes pulseDotAnim {
+  from { opacity: 0.3; transform: scale(0.8); }
+  to { opacity: 1; transform: scale(1.2); }
+}
 
 .explorerResultCard { background: var(--paper); border: 1px solid var(--ink); padding: 18px; display: grid; gap: 14px; }
 .explorerHead { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
