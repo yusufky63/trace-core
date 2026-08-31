@@ -187,47 +187,342 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 .chatToolbar .roomInputWrap input { border-radius: 0; }
 
 .chatToolbarActions { display: flex; gap: 8px; align-items: stretch; }
-.syncBtn { display: flex; align-items: center; gap: 6px; padding: 0 14px; font: 900 10px ui-monospace, monospace; height: 38px; }
 .syncIcon { transition: transform 0.3s ease; }
 .syncIcon.spinning { animation: spin 0.8s linear infinite; }
 
-.expandChatBtn { padding: 0 12px; font: 900 10px ui-monospace, monospace; display: flex; align-items: center; gap: 4px; height: 38px; }
+/* ==========================================================================
+   UNIFIED 2-BAR COMMAND CENTER HUD FOR CHAT
+   ========================================================================== */
+.chatContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 
-.chatPillsRow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 4px 0; }
-.pillsLabel { font: 900 9px ui-monospace, monospace; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
-.quickRooms { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-.quickRooms button { padding: 6px 12px; font-size: 9px; border: 1px solid var(--ink); background: var(--paper); cursor: pointer; transition: all 0.15s ease; }
-.quickRooms button.active { background: var(--ink); color: var(--bg); font-weight: 900; }
-.quickRooms button:hover:not(.active) { background: var(--soft); }
+/* BAR 1: TOP COMMAND BAR (REFINED PAPER / BRUTALIST THEME) */
+.chatCommandBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 6px 12px;
+  box-shadow: 2px 2px 0 var(--ink);
+  flex-wrap: wrap;
+}
 
-.chatControlBar { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; background: var(--soft); padding: 8px 10px; border: 1px solid var(--ink); }
-.chatFiltersGroup { display: flex; gap: 4px; }
-.chatFiltersGroup button { padding: 6px 9px; font-size: 9px; border: 1px solid transparent; background: transparent; font-weight: 700; cursor: pointer; }
-.chatFiltersGroup button.active { background: var(--ink); color: var(--bg); font-weight: 900; }
-.chatFiltersGroup button:hover:not(.active) { background: #e0ded5; }
+.chatMainTabs {
+  display: flex;
+  gap: 4px;
+}
+.mainTabBtn {
+  background: var(--soft);
+  color: var(--muted);
+  border: 1px solid var(--line);
+  padding: 6px 12px;
+  font: 900 10px ui-monospace, monospace;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+  border-radius: 2px;
+  letter-spacing: .04em;
+}
+.mainTabBtn:hover {
+  background: #e4e2d8;
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.mainTabBtn.active {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+  font-weight: 900;
+}
+.liveDotSmall {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #18764c;
+}
+.mainTabBtn.active .liveDotSmall {
+  background: #00ff66;
+}
 
-.chatSearchWrap { flex: 1; min-width: 160px; max-width: 320px; position: relative; }
-.chatSearchWrap input { padding: 5px 24px 5px 8px; font-size: 10px; height: 28px; background: var(--paper); border: 1px solid var(--line); }
-.chatSearchWrap .clearSearch { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px; font-size: 10px; }
+.compactNetStats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 900 9px ui-monospace, monospace;
+  color: var(--muted);
+}
+.netStatusBadge {
+  background: #e2f5e8;
+  color: #126332;
+  border: 1px solid #1e8243;
+  padding: 2px 6px;
+  border-radius: 2px;
+}
+.compactNetStats b {
+  color: var(--ink);
+}
 
-.chatStatusPill { display: flex; align-items: center; gap: 6px; font: 900 9px ui-monospace, monospace; color: var(--muted); padding: 3px 8px; background: var(--paper); border: 1px solid var(--line); }
-.liveDot { width: 6px; height: 6px; border-radius: 50%; background: #18764c; box-shadow: 0 0 5px #18764c; }
-.pillMsgs { color: var(--ink); font-weight: 900; }
-.pillTime { color: var(--muted); text-transform: uppercase; }
+.commandBarActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.hudBtn {
+  background: var(--soft);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 5px 12px;
+  font: 900 9px ui-monospace, monospace;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  transition: all 0.15s ease;
+  border-radius: 2px;
+  height: 28px;
+  letter-spacing: .04em;
+}
+.hudBtn:hover {
+  background: var(--ink);
+  color: var(--bg);
+}
+.hudBtn.accent {
+  background: var(--accent);
+  color: #000;
+  border-color: var(--ink);
+}
+.hudBtn.accent:hover {
+  background: #fff;
+  color: #000;
+}
+.hudBtn.sync svg {
+  color: currentColor;
+}
+
+/* BAR 2: SECONDARY CONTROL STRIP */
+.chatControlStrip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  background: var(--soft);
+  border: 1px solid var(--ink);
+  padding: 6px 10px;
+  flex-wrap: wrap;
+}
+
+.roomSelectorBlock {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.roomInputBox {
+  display: flex;
+  align-items: stretch;
+  height: 28px;
+}
+.roomInputBox .roomPrefix {
+  background: #dfdcce;
+  border: 1px solid var(--ink);
+  border-right: 0;
+  padding: 0 8px;
+  display: flex;
+  align-items: center;
+  font: 900 11px ui-monospace, monospace;
+  color: var(--muted);
+}
+.roomInputBox input {
+  border-radius: 0;
+  height: 28px;
+  font: 900 11px ui-monospace, monospace;
+  padding: 0 8px;
+  width: 120px;
+  background: #fff;
+  border: 1px solid var(--ink);
+}
+
+.fastRoomChips {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.fastRoomChips button {
+  padding: 4px 8px;
+  font: 900 9px ui-monospace, monospace;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  height: 28px;
+  border-radius: 2px;
+}
+.fastRoomChips button:hover {
+  background: #fff;
+  border-color: var(--ink);
+}
+.fastRoomChips button.active {
+  background: var(--ink);
+  color: var(--bg);
+  border-color: var(--ink);
+}
+
+/* View Mode Segment Switcher */
+.viewSegmentGroup {
+  display: flex;
+  border: 1px solid var(--ink);
+  background: #dfdcce;
+  padding: 2px;
+  gap: 2px;
+  border-radius: 2px;
+}
+.viewSegmentBtn {
+  padding: 4px 10px;
+  font: 900 9px ui-monospace, monospace;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  color: #555;
+  height: 24px;
+}
+.viewSegmentBtn:hover {
+  color: #000;
+}
+.viewSegmentBtn.active {
+  background: var(--ink);
+  color: var(--bg);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+
+/* Filter, Search & Count */
+.filterSearchBlock {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.filterSegmentGroup {
+  display: flex;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  padding: 2px;
+  gap: 2px;
+  border-radius: 2px;
+}
+.filterSegmentBtn {
+  padding: 3px 8px;
+  font: 900 8px ui-monospace, monospace;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--muted);
+  height: 24px;
+}
+.filterSegmentBtn:hover {
+  color: var(--ink);
+}
+.filterSegmentBtn.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.searchBox {
+  position: relative;
+  height: 28px;
+}
+.searchBox input {
+  height: 28px;
+  padding: 0 20px 0 8px;
+  font: 900 10px ui-monospace, monospace;
+  width: 120px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.searchBox .clearSearchBtn {
+  position: absolute;
+  right: 5px;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 10px;
+}
+
+.liveMsgCount {
+  font: 900 9px ui-monospace, monospace;
+  color: var(--muted);
+  background: var(--paper);
+  border: 1px solid var(--line);
+  padding: 0 8px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  border-radius: 2px;
+  white-space: nowrap;
+}
 
 .chatFeedContainer { position: relative; width: 100%; }
 .chatFeed { height: 520px; min-height: 440px; max-height: 65vh; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--ink); background: #faf8f4; color: #111311; scrollbar-color: var(--ink) #eeece4; }
 .chatEmpty { min-height: 100%; padding: 40px 20px; display: grid; place-items: center; color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-@keyframes messageFadeIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
+@keyframes streamMessageIn {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+    background: #eef6f0;
+  }
+  50% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    background: #f6faf7;
+  }
+  100% {
+    background: #ffffff;
+  }
 }
 
-.chatMessage { padding: 12px 14px; border-bottom: 1px solid #e7e4dc; background: #ffffff; transition: background 0.15s ease; animation: messageFadeIn 0.22s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+.chatMessage {
+  padding: 12px 14px;
+  border-bottom: 1px solid #e7e4dc;
+  background: #ffffff;
+  transition: background 0.15s ease;
+  will-change: transform, opacity;
+}
+.chatMessage.streamIn {
+  animation: streamMessageIn 0.26s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
 .chatMessage:hover { background: #fbf9f4; }
 .chatMessage.mine { background: #f4eee2; box-shadow: inset 3px 0 var(--accent); }
 .chatMessage.pending { opacity: 0.65; background: #eeece4; border-left: 3px solid var(--line); }
+
+.streamingFeedBanner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #eef6f0;
+  border-bottom: 1px solid #18764c;
+  color: #126332;
+  padding: 6px 14px;
+  font: 900 9px ui-monospace, monospace;
+  letter-spacing: .06em;
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  backdrop-filter: blur(4px);
+}
 
 .messageMeta { display: flex; align-items: center; gap: 8px; color: #6a7167; font: 9px ui-monospace, SFMono-Regular, Menlo, monospace; flex-wrap: wrap; }
 .messageMeta code { color: #111311; background: #ebe8df; padding: 2px 5px; border: 1px solid #d9d5c7; border-radius: 2px; }
@@ -249,15 +544,145 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
 .badText { color: #b42c20; font-weight: 900; }
 .modeBody .proofPoster { min-height: 180px; }
 
-/* Enhanced Chat and Vault Styles */
-.vaultCard { border: 1px solid var(--ink); background: var(--paper); padding: 22px; display: grid; gap: 16px; }
-.vaultCard.highlight { border: 2px solid var(--ink); background: #fdfcf7; box-shadow: 4px 4px 0 var(--ink); }
-.vaultCardHead { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
-.vaultCardHead span { font: 900 10px ui-monospace, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.vaultCardHead b { font: 900 11px ui-monospace, monospace; color: var(--accent); }
-.vaultActiveBanner { border: 1px solid #18764c; background: #eef6f0; padding: 18px; display: grid; gap: 12px; }
-.vaultActiveHead { display: flex; align-items: center; gap: 10px; font: 900 11px ui-monospace, monospace; color: #18764c; }
-.vaultActiveHead span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #18764c; }
+/* Enhanced Vault & Key Layout (Expansive & Spacious) */
+.vaultCard {
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  padding: 28px;
+  display: grid;
+  gap: 20px;
+  width: 100%;
+}
+.vaultCard.highlight {
+  border: 2px solid var(--ink);
+  background: #fdfcf7;
+  box-shadow: 4px 4px 0 var(--ink);
+}
+.vaultCardHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+.vaultCardHead span {
+  font: 900 11px ui-monospace, monospace;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.vaultCardHead b {
+  font: 900 12px ui-monospace, monospace;
+  color: var(--accent);
+}
+
+.vaultActiveBanner {
+  border: 2px solid #18764c;
+  background: #eef6f0;
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  width: 100%;
+}
+.vaultActiveHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font: 900 12px ui-monospace, monospace;
+  color: #18764c;
+}
+.vaultActiveHead span {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #18764c;
+}
+
+/* Direct Raw Private Key Export Section (Spacious & Full-Width) */
+.privateKeyCard {
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  padding: 24px;
+  display: grid;
+  gap: 16px;
+  width: 100%;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.privateKeyHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.privateKeyHead span {
+  font: 900 11px ui-monospace, monospace;
+  color: #b42c20;
+  letter-spacing: .06em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.keyRevealBox {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: #fdfcf7;
+  border: 1px solid var(--ink);
+  padding: 14px 18px;
+  width: 100%;
+}
+.keyRevealBox code {
+  font: 900 12px/1.5 ui-monospace, monospace;
+  color: var(--ink);
+  word-break: break-all;
+  user-select: all;
+  letter-spacing: .06em;
+  flex: 1;
+}
+.keyActionBtns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.keyActionBtns button {
+  padding: 6px 14px !important;
+  font-size: 10px !important;
+}
+
+/* Onboarding / Start Mode Tabs */
+.startNavTabs {
+  display: flex;
+  border-bottom: 1px solid var(--ink);
+  background: var(--soft);
+  margin-bottom: 14px;
+}
+.startNavTabs button {
+  flex: 1;
+  padding: 11px 16px;
+  font: 900 10px ui-monospace, monospace;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.15s ease;
+}
+.startNavTabs button:last-child {
+  border-right: 0;
+}
+.startNavTabs button.active {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.startNavTabs button:hover:not(.active) {
+  background: #e4e2d8;
+}
 
 .chatContainer { position: relative; display: grid; gap: 10px; }
 
@@ -343,12 +768,13 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
   inset: 0;
   z-index: 9999;
   background: var(--bg);
-  padding: 16px 24px;
+  padding: 12px 18px;
   display: flex;
   flex-direction: column;
   height: 100vh;
   width: 100vw;
   box-sizing: border-box;
+  gap: 8px;
 }
 .chatContainer.fullscreenMode .chatFeedContainer {
   flex: 1;
@@ -373,11 +799,409 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
   to { transform: rotate(360deg); }
 }
 
+/* ==========================================================================
+   NETWORK LIVE STATS HUD & ROOMS COMMAND BAR
+   ========================================================================== */
+.networkStatsBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  background: #0f120f;
+  color: #fff;
+  padding: 8px 14px;
+  font: 900 10px ui-monospace, monospace;
+  border: 1px solid var(--ink);
+  margin-bottom: 8px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.statsItems {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.statsItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.statsItem .dotLive {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #00ff66;
+  box-shadow: 0 0 8px #00ff66;
+  animation: pulseDotAnim 1.2s infinite alternate;
+}
+.statsItem span {
+  color: #889688;
+  letter-spacing: .06em;
+}
+.statsItem b {
+  color: #fff;
+}
+.statsActions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.exploreRoomsBtn {
+  background: var(--accent);
+  color: #000;
+  border: 1px solid var(--ink);
+  padding: 5px 12px;
+  font: 900 9px ui-monospace, monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 1px 1px 0 var(--ink);
+}
+.exploreRoomsBtn:hover {
+  background: #fff;
+  color: #000;
+  transform: translate(-1px, -1px);
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.createRoomQuickBtn {
+  background: #1e261e;
+  color: #00ff66;
+  border: 1px solid #2d3b2d;
+  padding: 5px 10px;
+  font: 900 9px ui-monospace, monospace;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.createRoomQuickBtn:hover {
+  background: #00ff66;
+  color: #000;
+}
+
+/* View Mode Switcher */
+.viewModeSwitch {
+  display: flex;
+  gap: 4px;
+}
+.viewModeSwitch button {
+  padding: 4px 10px;
+  font: 900 9px ui-monospace, monospace;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.viewModeSwitch button.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+.viewModeSwitch button:hover:not(.active) {
+  background: var(--soft);
+}
+
+/* Identicon Avatar Component */
+.identiconWrap {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  overflow: hidden;
+  vertical-align: middle;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  border: 1px solid rgba(0,0,0,0.2);
+}
+
+/* ==========================================================================
+   DID IDENTITY / PROFILE CARD MODAL
+   ========================================================================== */
+.didModalOverlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.65);
+  backdrop-filter: blur(3px);
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+.didCardModal {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 8px 8px 0 var(--ink);
+  width: 100%;
+  max-width: 480px;
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+  animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes modalPop {
+  from { opacity: 0; transform: scale(0.95) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.didCardModalHead {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--ink);
+  padding-bottom: 14px;
+}
+.didAvatarBlock {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.didCardTitleBlock {
+  display: grid;
+  gap: 3px;
+}
+.didCardTitleBlock span {
+  font: 900 9px ui-monospace, monospace;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.didCardTitleBlock code {
+  font: 900 11px ui-monospace, monospace;
+  color: var(--ink);
+  word-break: break-all;
+}
+.modalCloseBtn {
+  background: transparent;
+  border: 1px solid var(--line);
+  padding: 4px 8px;
+  font: 900 12px ui-monospace, monospace;
+  cursor: pointer;
+}
+.modalCloseBtn:hover {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.didCardGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  background: var(--soft);
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+.didCardGridItem {
+  display: grid;
+  gap: 3px;
+}
+.didCardGridItem small {
+  font: 900 8px ui-monospace, monospace;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.didCardGridItem span, .didCardGridItem a {
+  font: 10px ui-monospace, monospace;
+  color: var(--ink);
+  word-break: break-all;
+  font-weight: 700;
+}
+.didCardGridItem a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.didCardActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.didCardActions button {
+  flex: 1;
+  min-width: 140px;
+  padding: 8px 12px;
+  font: 900 9px ui-monospace, monospace;
+  height: 36px;
+}
+
+/* ==========================================================================
+   ROOMS EXPLORER & ROOM CREATION WIZARD MODAL
+   ========================================================================== */
+.roomsModal {
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  box-shadow: 8px 8px 0 var(--ink);
+  width: 100%;
+  max-width: 760px;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: modalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.roomsModalHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--ink);
+  background: var(--soft);
+}
+.roomsModalHead h3 {
+  margin: 0;
+  font: 900 14px ui-monospace, monospace;
+  letter-spacing: .06em;
+}
+
+.roomsModalTabs {
+  display: flex;
+  border-bottom: 1px solid var(--ink);
+  background: var(--paper);
+}
+.roomsModalTabs button {
+  flex: 1;
+  padding: 11px 16px;
+  font: 900 10px ui-monospace, monospace;
+  border: 0;
+  border-right: 1px solid var(--line);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.roomsModalTabs button:last-child {
+  border-right: 0;
+}
+.roomsModalTabs button.active {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.roomsModalBody {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.roomFilterChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+.roomFilterChip {
+  padding: 4px 8px;
+  font: 900 8px ui-monospace, monospace;
+  border: 1px solid var(--line);
+  background: var(--soft);
+  cursor: pointer;
+}
+.roomFilterChip.active {
+  background: var(--ink);
+  color: #fff;
+}
+
+.roomCardsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+.roomCardItem {
+  background: #fff;
+  border: 1px solid var(--ink);
+  padding: 14px;
+  display: grid;
+  gap: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+.roomCardItem:hover {
+  transform: translate(-2px, -2px);
+  box-shadow: 4px 4px 0 var(--ink);
+  background: #fdfaf3;
+}
+.roomCardItemHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.roomCardItemHead b {
+  font: 900 12px ui-monospace, monospace;
+  color: var(--ink);
+}
+.roomKindTag {
+  font: 900 7px ui-monospace, monospace;
+  padding: 2px 5px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+}
+.roomCardTopic {
+  font: 10px ui-monospace, monospace;
+  color: var(--muted);
+  line-height: 1.35;
+  max-height: 38px;
+  overflow: hidden;
+}
+.roomCardStats {
+  display: flex;
+  justify-content: space-between;
+  font: 900 8px ui-monospace, monospace;
+  color: var(--muted);
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
+/* Create Room Wizard Presets */
+.presetTypesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+.presetTypeCard {
+  border: 1px solid var(--line);
+  background: var(--soft);
+  padding: 12px;
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+  transition: all 0.15s ease;
+}
+.presetTypeCard:hover {
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.presetTypeCard.selected {
+  border: 2px solid var(--ink);
+  background: #fff;
+  box-shadow: 3px 3px 0 var(--ink);
+}
+.presetTypeCard b {
+  font: 900 11px ui-monospace, monospace;
+  color: var(--ink);
+}
+.presetTypeCard p {
+  margin: 0;
+  font: 9px ui-monospace, monospace;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* Staggered message entry and glow */
+@keyframes newArrivalGlow {
+  0% { background-color: #fff2d6; }
+  100% { background-color: #ffffff; }
+}
+.chatMessage.newArrival { animation: newArrivalGlow 2.5s ease-out forwards; }
+
 @media (max-width: 1000px) {
   .focusWorkspace { grid-template-columns: 1fr; }
   .focusMain { min-height: auto; border-right: 0; }
   .statusRail { border-top: 1px solid var(--ink); }
   .compactHero h1 { font-size: clamp(58px, 12vw, 102px); }
+  .networkStatsBar { flex-direction: column; align-items: flex-start; }
 }
 
 @media (max-width: 700px) {
@@ -393,10 +1217,13 @@ button.primary:hover { background: var(--accent); border-color: var(--accent); c
   .chatToolbar { grid-template-columns: 1fr; }
   .chatFilterRow { align-items: flex-start; flex-direction: column; }
   .chatFeed { height: 60vh; min-height: 360px; }
+  .didCardGrid { grid-template-columns: 1fr; }
+  .roomCardsGrid { grid-template-columns: 1fr; }
   .messageMeta { flex-wrap: wrap; }
   .messageMeta time { margin-left: 0; }
   .lockedNotice { align-items: stretch; flex-direction: column; }
   .feedbackBanner { align-items: flex-start; }
 }
+
 
 

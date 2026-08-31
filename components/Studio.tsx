@@ -1,20 +1,24 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   DID_PATTERN, MAILBOX_PATTERN, NAME_PATTERN, codePointLength, createIdentity,
   createIdentityBackup, createMailboxName, decryptSeed, didFingerprint, downloadJson,
-  encryptSeed, nextRoomNonce, parseIdentityBackup, signRoomMessage, sweepSingleLine,
-  verifyRoomMessage, type ContributionProofRecord, type IdentityActivity,
-  type IdentityBackup, type TechnocoreReceipt, type VaultPayload,
+  downloadText, encryptSeed, importIdentityFromHex, nextRoomNonce, parseIdentityBackup,
+  seedToHex, signRoomMessage, sweepSingleLine, verifyRoomMessage,
+  type ContributionProofRecord, type IdentityActivity, type IdentityBackup,
+  type TechnocoreReceipt, type VaultPayload,
 } from "@/lib/identity";
-import { technocore } from "@/lib/technocore";
+import {
+  technocore, parseRoomsListing, generateRoomSlug,
+  type RoomInfo, type RoomsSummary
+} from "@/lib/technocore";
 
 type Log = { at: string; label: string; detail: string; ok: boolean };
 type ProofInput = { contributionUrl: string; description: string };
 type Mode = "start" | "chat" | "profile" | "proof";
 type ChatFilter = "all" | "signed" | "mine";
-type ChatMessage = { seq: number; ts: string; from: string; text: string; nonce: number | null; pending?: boolean };
+type ChatMessage = { seq: number; ts: string; from: string; text: string; nonce: number | null; pending?: boolean; isNew?: boolean };
 type Feedback = { ok: boolean; text: string };
 
 const STORAGE_KEY = "trace-core-identity-v2";
@@ -69,19 +73,10 @@ function formatChatTime(value: string) {
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
-function roomKind(room: string) {
-  if (room.startsWith("mb-p-")) return "UNLISTED SIGNED MAILBOX";
-  if (room.startsWith("e-p-")) return "UNLISTED EPHEMERAL";
-  if (room.startsWith("p-")) return "UNLISTED · URL IS THE CAPABILITY";
-  if (room.startsWith("mb-")) return "SIGNED-WRITE MAILBOX";
-  if (room.startsWith("e-")) return "EPHEMERAL ROOM";
-  if (room.startsWith("d-")) return "OWNABLE ROOM";
-  return "PUBLIC ROOM";
-}
 
-async function unlockBackupSeed(backup: IdentityBackup, password: string) {
+function unlockBackupSeed(backup: IdentityBackup, password: string) {
   try {
-    return await decryptSeed(backup.vault, password);
+    return decryptSeed(backup.vault, password);
   } catch {
     throw new Error("Password incorrect or encrypted vault is damaged. Please verify your password.");
   }
@@ -112,6 +107,49 @@ function parseProfileNote(rawText: string) {
   if (nickMatch) res.nick = nickMatch[1];
 
   return res;
+}
+
+function Identicon({ did, size = 26 }: { did: string; size?: number }) {
+  const hash = useMemo(() => {
+    let h = 0;
+    for (let i = 0; i < did.length; i++) {
+      h = ((h << 5) - h) + did.charCodeAt(i);
+      h |= 0;
+    }
+    return h;
+  }, [did]);
+
+  const colors = [
+    "#e05a2b", "#1d70b8", "#00823b", "#28a197", 
+    "#d4351c", "#6f72af", "#f47738", "#4c2c92", "#005ea5"
+  ];
+  const color = colors[Math.abs(hash) % colors.length];
+  const accent = colors[Math.abs(hash >> 3) % colors.length];
+  const s = size / 5;
+
+  const rects: Array<{ key: string; x: number; y: number; fill: string }> = [];
+  for (let y = 0; y < 5; y++) {
+    for (let x = 0; x < 3; x++) {
+      const bit = ((hash >> (x + y * 3)) & 1) === 1;
+      if (bit) {
+        const fill = (x === 1 && y === 1) ? accent : color;
+        rects.push({ key: `${x}-${y}`, x: x * s, y: y * s, fill });
+        if (x < 2) {
+          rects.push({ key: `${4 - x}-${y}`, x: (4 - x) * s, y: y * s, fill });
+        }
+      }
+    }
+  }
+
+  return (
+    <span className="identiconWrap" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ background: "#111111" }}>
+        {rects.map((r) => (
+          <rect key={r.key} x={r.x} y={r.y} width={s} height={s} fill={r.fill} />
+        ))}
+      </svg>
+    </span>
+  );
 }
 
 export default function Studio() {
@@ -146,6 +184,44 @@ export default function Studio() {
   const [pendingImport, setPendingImport] = useState<IdentityBackup | null>(null);
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const [chatSubView, setChatSubView] = useState<"room" | "explorer">("room");
+
+  // DID Card Modal state
+  const [activeProfileDid, setActiveProfileDid] = useState<string | null>(null);
+  const [profileCardData, setProfileCardData] = useState<{
+    did: string;
+    note: string | null;
+    parsed: { raw: string; x?: string; profile?: string; mailbox?: string; nick?: string } | null;
+    loading: boolean;
+  } | null>(null);
+
+  // Rooms Explorer & Creator Modal state
+  const [isRoomsModalOpen, setIsRoomsModalOpen] = useState(false);
+  const [roomsSummary, setRoomsSummary] = useState<RoomsSummary | null>(null);
+  const [roomsLoading, setRoomsLoading] = useState(false);
+  const [roomsSearch, setRoomsSearch] = useState("");
+  const [roomsCategory, setRoomsCategory] = useState<"all" | "active" | "mailboxes" | "private" | "ephemeral">("all");
+  const [roomsModalTab, setRoomsModalTab] = useState<"browse" | "create">("browse");
+  const [newRoomKind, setNewRoomKind] = useState<"public" | "p-" | "e-" | "e-p-" | "mb-p-" | "d-">("public");
+  const [newRoomSlug, setNewRoomSlug] = useState("");
+  const [newRoomTopic, setNewRoomTopic] = useState("");
+
+  // Live Network Stats
+  const [netStats, setNetStats] = useState<{
+    activeRooms: number;
+    capRooms: number;
+    storedBytes: string;
+    capBytes: string;
+    lobbySeq: number;
+    status: "live" | "syncing" | "offline";
+  }>({
+    activeRooms: 42296,
+    capRooms: 81920,
+    storedBytes: "373M",
+    capBytes: "5.0G",
+    lobbySeq: 12043200,
+    status: "live",
+  });
+
   const [explorerDidInput, setExplorerDidInput] = useState("");
   const [selectedScanRooms, setSelectedScanRooms] = useState<string[]>(["lobby", "technocore", "events"]);
   const [customScanRoomInput, setCustomScanRoomInput] = useState("");
@@ -183,6 +259,39 @@ export default function Studio() {
     }
   }, []);
 
+  const [showRawKey, setShowRawKey] = useState(false);
+  const [startTab, setStartTab] = useState<"create" | "import_raw" | "import_json">("create");
+  const [rawKeyInput, setRawKeyInput] = useState("");
+
+  const rawKeyHex = useMemo(() => {
+    return seed ? seedToHex(seed) : "";
+  }, [seed]);
+
+  const onCopyRawKey = useCallback(async () => {
+    if (!rawKeyHex) return;
+    await copyToClipboard(rawKeyHex, "Raw Private Key (Hex Seed)");
+  }, [copyToClipboard, rawKeyHex]);
+
+  const onDownloadRawKey = useCallback(() => {
+    if (!rawKeyHex || !did) return;
+    const content = [
+      "=================================================================",
+      "TRACE/CORE — RAW ED25519 PRIVATE KEY EXPORT (UNIVERSAL STANDARD)",
+      "=================================================================",
+      `DID (PUBLIC ID)  : ${did}`,
+      `PRIVATE KEY (HEX) : ${rawKeyHex}`,
+      "-----------------------------------------------------------------",
+      "WARNING: NEVER SHARE THIS FILE OR KEY WITH ANYONE.",
+      "Anyone who possesses this 64-character Hex Seed can sign messages",
+      "and claim full ownership of your DID on Technocore, FLOP, or any",
+      "other compatible Web3 platform / external agent framework.",
+      "=================================================================",
+      `Exported at: ${new Date().toISOString()}`,
+    ].join("\n");
+    downloadText(`trace-core-private-key-${shortIdentity(did)}.txt`, content);
+    setFeedback({ ok: true, text: "Raw Private Key downloaded as text file!" });
+  }, [did, rawKeyHex]);
+
   const cleanMessageLength = codePointLength(sweepSingleLine(message));
   const roomReady = NAME_PATTERN.test(room);
   const profileReady = !!did && MAILBOX_PATTERN.test(mailbox) && validXHandle(xHandle.trim()) && (!profileUrl.trim() || isHttpsUrl(profileUrl.trim()));
@@ -219,22 +328,137 @@ export default function Studio() {
     });
   }, [chatFilter, chatMessages, chatSearch, did]);
 
+  const [streamedLimit, setStreamedLimit] = useState<number>(50);
+
+  // When switching to a new room, restart streaming waterfall
+  useEffect(() => {
+    setStreamedLimit(2);
+  }, [room]);
+
+  // Progressive streaming waterfall ticker for fast animated reveal (50 msgs flow in ~500ms)
+  useEffect(() => {
+    if (visibleMessages.length === 0) {
+      setStreamedLimit(0);
+      return;
+    }
+    if (streamedLimit >= visibleMessages.length) {
+      return;
+    }
+    const interval = window.setInterval(() => {
+      setStreamedLimit((prev) => {
+        const next = prev + 2;
+        if (next >= visibleMessages.length) {
+          window.clearInterval(interval);
+          return visibleMessages.length;
+        }
+        if (isNearBottomRef.current && chatFeedRef.current) {
+          chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+        }
+        return next;
+      });
+    }, 20);
+    return () => window.clearInterval(interval);
+  }, [visibleMessages.length, streamedLimit]);
+
+  const displayedFeedMessages = useMemo(() => {
+    return visibleMessages.slice(0, Math.max(1, streamedLimit));
+  }, [visibleMessages, streamedLimit]);
+
   useEffect(() => {
     const current = localStorage.getItem(STORAGE_KEY);
     const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
     const chatSettings = localStorage.getItem(CHAT_SETTINGS_KEY);
     if (chatSettings && NAME_PATTERN.test(chatSettings)) setRoom(chatSettings);
-    setStoredVaultAvailable(Boolean(current || legacy));
+
+    const raw = current ?? legacy;
+    if (raw) {
+      try {
+        const backup = parseIdentityBackup(JSON.parse(raw));
+        setVault(backup.vault);
+        setDid(backup.vault.did);
+        if (backup.profile.mailbox) setMailbox(backup.profile.mailbox);
+        if (backup.profile.xHandle) setXHandle(backup.profile.xHandle);
+        if (backup.profile.profileUrl) setProfileUrl(backup.profile.profileUrl);
+        if (backup.activity) setActivity(backup.activity);
+        if (backup.lastProof) {
+          setProofRecord(backup.lastProof);
+          setProof({
+            contributionUrl: backup.lastProof.contribution.url,
+            description: backup.lastProof.contribution.description,
+          });
+        }
+        if (backup.createdAt) setCreatedAt(backup.createdAt);
+        setStoredVaultAvailable(true);
+      } catch {
+        setStoredVaultAvailable(Boolean(current || legacy));
+      }
+    }
     setStorageReady(true);
   }, []);
 
   useEffect(() => { if (roomReady) localStorage.setItem(CHAT_SETTINGS_KEY, room); }, [room, roomReady]);
 
+  // Synchronize vault and profile updates to localStorage
   useEffect(() => {
     if (!storageReady || !vault || !createdAt) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(createIdentityBackup(vault, { mailbox, xHandle, profileUrl }, activity, proofRecord, createdAt)));
+    localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(
+        createIdentityBackup(
+          vault,
+          { mailbox, xHandle, profileUrl },
+          activity,
+          proofRecord,
+          createdAt
+        )
+      )
+    );
     setStoredVaultAvailable(true);
   }, [activity, createdAt, mailbox, profileUrl, proofRecord, storageReady, vault, xHandle]);
+
+  // Auto-fetch and restore published profile coordinates from Technocore network
+  useEffect(() => {
+    if (!did || !DID_PATTERN.test(did)) return;
+    let isSubscribed = true;
+
+    async function fetchOnlineProfile() {
+      try {
+        const fp = await didFingerprint(did);
+        const ns = `did-${fp.slice(0, 2)}`;
+        const key = fp.slice(2);
+        const noteRes = await technocore(`/kv/${ns}/${key}`);
+        let rawNote = "";
+        if (typeof noteRes === "string") {
+          rawNote = noteRes.split("\n\n").slice(1).join("\n\n").trim() || noteRes.trim();
+        } else if (isRecord(noteRes) && typeof noteRes.value === "string") {
+          rawNote = noteRes.value;
+        }
+        if (rawNote && isSubscribed) {
+          const parsed = parseProfileNote(rawNote);
+          if (parsed) {
+            if (parsed.mailbox && MAILBOX_PATTERN.test(parsed.mailbox)) {
+              setMailbox((prev) => prev || parsed.mailbox!);
+            }
+            if (parsed.x) {
+              setXHandle((prev) => prev || parsed.x!);
+            }
+            if (parsed.profile) {
+              setProfileUrl((prev) => prev || parsed.profile!);
+            }
+            setActivity((prev) => ({
+              ...prev,
+              profilePublishedAt: prev.profilePublishedAt || new Date().toISOString(),
+            }));
+          }
+        }
+      } catch {
+        // Not published on Technocore or network error
+      }
+    }
+
+    void fetchOnlineProfile();
+    return () => { isSubscribed = false; };
+  }, [did]);
 
   function log(label: string, detail: unknown, ok = true) {
     const rendered = typeof detail === "string" ? detail : JSON.stringify(detail);
@@ -269,10 +493,40 @@ export default function Studio() {
     if (!chatFeedRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = chatFeedRef.current;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-    const isBottom = distanceFromBottom < 60;
+    const isBottom = distanceFromBottom < 70;
     isNearBottomRef.current = isBottom;
     if (isBottom) setHasUnreadBelow(false);
   }, []);
+
+  // Guarantee chat feed is pinned to the bottom when opened or streaming
+  useEffect(() => {
+    if (activeMode === "chat" && chatFeedRef.current) {
+      if (isNearBottomRef.current) {
+        chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+      }
+    }
+  }, [activeMode, displayedFeedMessages.length]);
+
+  // Initial scroll anchoring when entering chat mode or room switch
+  useEffect(() => {
+    if (activeMode === "chat") {
+      isNearBottomRef.current = true;
+      const t1 = setTimeout(() => {
+        if (chatFeedRef.current) chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+      }, 40);
+      const t2 = setTimeout(() => {
+        if (chatFeedRef.current) chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+      }, 180);
+      const t3 = setTimeout(() => {
+        if (chatFeedRef.current) chatFeedRef.current.scrollTop = chatFeedRef.current.scrollHeight;
+      }, 450);
+      return () => {
+        clearTimeout(t1);
+        clearTimeout(t2);
+        clearTimeout(t3);
+      };
+    }
+  }, [activeMode, room]);
 
   const loadChat = useCallback(async (silent = false, resetRoom = false) => {
     if (!NAME_PATTERN.test(room)) {
@@ -554,6 +808,45 @@ export default function Studio() {
     });
   }
 
+  async function onImportRawKey() {
+    const cleanHex = rawKeyInput.trim().replace(/^0x/i, "");
+    if (!/^[0-9a-fA-F]{64}$/.test(cleanHex)) {
+      setFeedback({ ok: false, text: "Invalid Private Key format. Please enter a 64-character hexadecimal Ed25519 seed." });
+      return;
+    }
+    if (password.length < 8) {
+      setFeedback({ ok: false, text: "Please enter a vault password of at least 8 characters to encrypt your imported key." });
+      return;
+    }
+    await run("import_raw", async () => {
+      if (storedVaultAvailable && !replaceArmed) {
+        setReplaceArmed(true);
+        log("IMPORT", "Existing vault protected. Confirm replacement to import this Private Key.", false);
+        return;
+      }
+      const { seed: importedSeed, did: derivedDid } = await importIdentityFromHex(cleanHex);
+      const encrypted = await encryptSeed(importedSeed, derivedDid, password);
+      const now = new Date().toISOString();
+      setDid(derivedDid);
+      setSeed(importedSeed);
+      setVault(encrypted);
+      setMailbox(createMailboxName());
+      setXHandle("");
+      setProfileUrl("");
+      setActivity(EMPTY_ACTIVITY);
+      setProof(INITIAL_PROOF);
+      setProofRecord(null);
+      setCreatedAt(now);
+      setPassword("");
+      setRawKeyInput("");
+      setReplaceArmed(false);
+      localStorage.removeItem(LEGACY_STORAGE_KEY);
+      setFeedback({ ok: true, text: `Private Key imported successfully! DID: ${shortIdentity(derivedDid)} is active and encrypted in your local vault.` });
+      setActiveMode("chat");
+      log("IMPORT", `${derivedDid} · imported raw hex private key · encrypted locally`);
+    });
+  }
+
   async function onUnlock() {
     if (!password) {
       setFeedback({ ok: false, text: "Please enter your vault password." });
@@ -761,6 +1054,161 @@ export default function Studio() {
     log("VAULT", "Encrypted portable backup downloaded.");
   }
 
+  const loadRoomsSummary = useCallback(async () => {
+    setRoomsLoading(true);
+    try {
+      const res = await technocore("/rooms");
+      if (typeof res === "string") {
+        const summary = parseRoomsListing(res);
+        setRoomsSummary(summary);
+        if (summary.activeRooms > 0) {
+          setNetStats((prev) => ({
+            ...prev,
+            activeRooms: summary.activeRooms,
+            capRooms: summary.capRooms,
+            storedBytes: summary.storedBytes,
+            capBytes: summary.capBytes,
+            status: "live",
+          }));
+        }
+      }
+    } catch {
+      setNetStats((prev) => ({ ...prev, status: "syncing" }));
+    } finally {
+      setRoomsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadRoomsSummary();
+    const interval = setInterval(() => {
+      if (!document.hidden) void loadRoomsSummary();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [loadRoomsSummary]);
+
+  const openDidProfileCard = useCallback(async (targetDid: string) => {
+    if (!DID_PATTERN.test(targetDid)) {
+      setFeedback({ ok: false, text: `"${targetDid}" is a custom nickname, not a did:key address.` });
+      return;
+    }
+    setActiveProfileDid(targetDid);
+    setProfileCardData({
+      did: targetDid,
+      note: null,
+      parsed: null,
+      loading: true,
+    });
+
+    try {
+      const fp = await didFingerprint(targetDid);
+      const ns = `did-${fp.slice(0, 2)}`;
+      const key = fp.slice(2);
+      const res = await technocore(`/kv/${ns}/${key}`);
+      let rawNote = "";
+      if (typeof res === "string") {
+        rawNote = res.split("\n\n").slice(1).join("\n\n").trim() || res.trim();
+      } else if (isRecord(res) && typeof res.value === "string") {
+        rawNote = res.value;
+      }
+      const parsed = rawNote ? parseProfileNote(rawNote) : null;
+      setProfileCardData({
+        did: targetDid,
+        note: rawNote || null,
+        parsed,
+        loading: false,
+      });
+    } catch {
+      setProfileCardData({
+        did: targetDid,
+        note: null,
+        parsed: null,
+        loading: false,
+      });
+    }
+  }, []);
+
+  const handleCreateRoom = useCallback(async () => {
+    const generatedName = generateRoomSlug(newRoomKind, newRoomSlug);
+    if (!NAME_PATTERN.test(generatedName)) {
+      setFeedback({ ok: false, text: "Invalid room name. Use lowercase letters, numbers, hyphens." });
+      return;
+    }
+    setRoom(generatedName);
+    setIsRoomsModalOpen(false);
+    setActiveMode("chat");
+    setChatSubView("room");
+    setFeedback({ ok: true, text: `Switched to room /r/${generatedName}!` });
+
+    if (newRoomTopic.trim() && seed && did) {
+      try {
+        await technocore(`/kv/${generatedName}/topic`, "POST", { value: newRoomTopic.trim() });
+      } catch {}
+    }
+  }, [did, newRoomKind, newRoomSlug, newRoomTopic, seed]);
+
+  const filteredRooms = useMemo(() => {
+    if (!roomsSummary?.rooms) return [];
+    let list = roomsSummary.rooms;
+    if (roomsCategory === "active") list = list.filter((r) => r.seq > 1000);
+    else if (roomsCategory === "mailboxes") list = list.filter((r) => r.name.startsWith("mb-"));
+    else if (roomsCategory === "private") list = list.filter((r) => r.name.startsWith("p-") || r.name.startsWith("e-p-") || r.name.startsWith("mb-p-"));
+    else if (roomsCategory === "ephemeral") list = list.filter((r) => r.name.startsWith("e-"));
+
+    const q = roomsSearch.trim().toLowerCase();
+    if (!q) return list;
+    return list.filter((r) => r.name.toLowerCase().includes(q) || r.topic.toLowerCase().includes(q));
+  }, [roomsCategory, roomsSearch, roomsSummary]);
+
+  const stageParticipants = useMemo(() => {
+    const map = new Map<string, {
+      from: string;
+      lastMsg: string;
+      lastTs: string;
+      count: number;
+      signed: boolean;
+      isMine: boolean;
+    }>();
+
+    for (const m of chatMessages) {
+      const existing = map.get(m.from);
+      const signed = isSignedMessage(m);
+      const isMine = !!did && m.from === did;
+      if (!existing) {
+        map.set(m.from, {
+          from: m.from,
+          lastMsg: m.text,
+          lastTs: m.ts,
+          count: 1,
+          signed,
+          isMine,
+        });
+      } else {
+        existing.lastMsg = m.text;
+        existing.lastTs = m.ts;
+        existing.count += 1;
+        if (signed) existing.signed = true;
+      }
+    }
+
+    const all = Array.from(map.values()).sort((a, b) => new Date(b.lastTs).getTime() - new Date(a.lastTs).getTime());
+    const MAX_STAGE_AGENTS = 6;
+    const capped = all.slice(0, MAX_STAGE_AGENTS);
+
+    // Ensure current user is visible on field if they participated
+    if (did && !capped.some((p) => p.from === did)) {
+      const me = all.find((p) => p.from === did);
+      if (me) {
+        if (capped.length >= MAX_STAGE_AGENTS) capped.pop();
+        capped.push(me);
+      }
+    }
+
+    return capped;
+  }, [chatMessages, did]);
+
+  const latestSpeaker = chatMessages.length > 0 ? chatMessages[chatMessages.length - 1] : null;
+
   const heroTitle = activeMode === "start" ? <>ONE KEY.<br/><em>YOUR AGENT.</em></>
     : activeMode === "chat" ? <>SIGNED CHAT.<br/><em>LIVE ROOM.</em></>
     : activeMode === "profile" ? <>PUBLIC SIGNAL.<br/><em>LOCAL KEY.</em></>
@@ -813,7 +1261,7 @@ export default function Studio() {
 
         {/* MODE 1: START / IDENTITY */}
         {activeMode === "start" && (
-          <ModePanel id="start" title="IDENTITY VAULT" eyebrow="Local-First Vault & DID" tabId="tab-start">
+          <ModePanel id="start" title="IDENTITY VAULT" eyebrow="Local-First Vault & DID" tabId="tab-start" wide>
             {/* STATE 0: PENDING IMPORT UNLOCK */}
             {pendingImport ? (
               <div className="vaultCard highlight">
@@ -843,19 +1291,72 @@ export default function Studio() {
                 </form>
               </div>
             ) : seed && did ? (
-              /* STATE 1: UNLOCKED ACTIVE SESSION */
-              <div className="vaultActiveBanner">
-                <div className="vaultActiveHead">
-                  <span /> SESSION ACTIVE — IDENTITY UNLOCKED
+              /* STATE 1: UNLOCKED ACTIVE SESSION (EXPANSIVE & CLEAN) */
+              <div style={{ display: "grid", gap: "16px", width: "100%" }}>
+                <div className="vaultActiveBanner">
+                  <div className="vaultActiveHead">
+                    <span /> SESSION ACTIVE — IDENTITY UNLOCKED
+                  </div>
+                  <CodeValue label="ACTIVE DID (PUBLIC IDENTIFIER)" value={did} />
+                  <div className="buttonRow">
+                    <button className="primary" onClick={() => setActiveMode("chat")}>OPEN CHAT ↗</button>
+                    <button onClick={() => setActiveMode("profile")}>PROFILE SETTINGS</button>
+                    <button onClick={onLockSession}>LOCK SESSION</button>
+                  </div>
                 </div>
-                <CodeValue label="ACTIVE DID" value={did} />
-                <div className="buttonRow">
-                  <button className="primary" onClick={() => setActiveMode("chat")}>OPEN CHAT ↗</button>
-                  <button onClick={() => setActiveMode("profile")}>PROFILE SETTINGS</button>
-                  <button onClick={onExportVault}>EXPORT BACKUP (JSON)</button>
-                  <button onClick={onLockSession}>LOCK SESSION</button>
+
+                {/* Direct Universal Raw Private Key & Portable Backup Export */}
+                <div className="privateKeyCard">
+                  <div className="privateKeyHead">
+                    <span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                      </svg>
+                      RAW PRIVATE KEY (ED25519 HEX SEED — UNIVERSAL STANDARD)
+                    </span>
+                    <div className="keyActionBtns">
+                      <button
+                        type="button"
+                        onClick={() => setShowRawKey((prev) => !prev)}
+                      >
+                        {showRawKey ? "HIDE KEY" : "SHOW KEY"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onCopyRawKey}
+                        className="primary"
+                        title="Copy 64-character hex seed to clipboard"
+                      >
+                        COPY RAW KEY (HEX)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onDownloadRawKey}
+                        title="Download raw key as text file for external bots & scripts"
+                      >
+                        DOWNLOAD KEY (.TXT)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={onExportVault}
+                        title="Download password-protected AES-256 JSON vault"
+                      >
+                        DOWNLOAD VAULT (.JSON)
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="keyRevealBox">
+                    <code>
+                      {showRawKey ? rawKeyHex : "••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••"}
+                    </code>
+                  </div>
+
+                  <p className="notice" style={{ margin: 0, fontSize: "11px" }}>
+                    <strong>WARNING: NEVER SHARE YOUR PRIVATE KEY.</strong> Anyone with this 64-character Hex Seed has full cryptographic control over this DID on Technocore, FLOP, or any external Python/Node bot and ElizaOS framework.
+                  </p>
                 </div>
-                <p className="micro">Your private key is loaded in memory for this session. It remains encrypted in your local browser vault.</p>
               </div>
             ) : storedVaultAvailable ? (
               /* STATE 2: PROTECTED LOCAL VAULT FOUND (LOCKED) */
@@ -887,17 +1388,90 @@ export default function Studio() {
 
                 <details style={{ marginTop: "12px", borderTop: "1px solid var(--line)", paddingTop: "12px" }}>
                   <summary style={{ cursor: "pointer", font: "900 9px ui-monospace, monospace", color: "var(--muted)" }}>
-                    OTHER ACTIONS (IMPORT BACKUP OR CREATE NEW DID)
+                    OTHER ACTIONS (IMPORT RAW KEY, JSON BACKUP, OR RESET)
                   </summary>
-                  <div style={{ marginTop: "14px", display: "grid", gap: "10px" }}>
-                    <div className="buttonRow">
-                      <button onClick={chooseBackup} disabled={!!busy}>IMPORT DIFFERENT JSON BACKUP</button>
-                      <button onClick={onCreateIdentity} disabled={!!busy} className={replaceArmed ? "primary" : ""}>
-                        {replaceArmed ? "CONFIRM NEW DID REPLACEMENT" : "CREATE NEW DID (RESET)"}
+                  <div style={{ marginTop: "14px", display: "grid", gap: "14px" }}>
+                    <div className="startNavTabs" role="tablist">
+                      <button
+                        type="button"
+                        className={startTab === "create" ? "active" : ""}
+                        onClick={() => setStartTab("create")}
+                      >
+                        CREATE NEW
                       </button>
-                      {replaceArmed && <button onClick={() => setReplaceArmed(false)}>CANCEL</button>}
+                      <button
+                        type="button"
+                        className={startTab === "import_raw" ? "active" : ""}
+                        onClick={() => setStartTab("import_raw")}
+                      >
+                        IMPORT RAW HEX
+                      </button>
+                      <button
+                        type="button"
+                        className={startTab === "import_json" ? "active" : ""}
+                        onClick={() => setStartTab("import_json")}
+                      >
+                        IMPORT JSON
+                      </button>
                     </div>
-                    {replaceArmed && <p className="notice danger">Replacing your identity will overwrite the local vault. Make sure you exported your current backup first.</p>}
+
+                    {startTab === "import_raw" ? (
+                      <form onSubmit={(e) => { e.preventDefault(); void onImportRawKey(); }} style={{ display: "grid", gap: "10px" }}>
+                        <Field label="Raw Private Key (64-char Hex Seed)" hint="Paste standard 32-byte Ed25519 private seed">
+                          <input
+                            type="text"
+                            value={rawKeyInput}
+                            onChange={(e) => setRawKeyInput(e.target.value)}
+                            placeholder="e.g. 4f8a12e3c0d7b8a9... (64 hex characters)"
+                            autoComplete="off"
+                            spellCheck={false}
+                          />
+                        </Field>
+                        <Field label="Choose New Vault Password" hint="At least 8 characters · encrypts this key locally">
+                          <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            autoComplete="new-password"
+                          />
+                        </Field>
+                        <div className="buttonRow">
+                          <button
+                            type="submit"
+                            className={replaceArmed ? "primary" : ""}
+                            disabled={!!busy || !rawKeyInput.trim() || password.length < 8}
+                          >
+                            {busy === "import_raw" ? "IMPORTING..." : replaceArmed ? "CONFIRM OVERWRITE & IMPORT KEY" : "IMPORT & ENCRYPT PRIVATE KEY"}
+                          </button>
+                          {replaceArmed && <button type="button" onClick={() => setReplaceArmed(false)}>CANCEL</button>}
+                        </div>
+                        {replaceArmed && <p className="notice danger">Replacing your identity will overwrite the local vault. Make sure you exported your current backup first.</p>}
+                      </form>
+                    ) : startTab === "import_json" ? (
+                      <div className="buttonRow">
+                        <button onClick={chooseBackup} disabled={!!busy}>CHOOSE BACKUP JSON FILE</button>
+                      </div>
+                    ) : (
+                      <div style={{ display: "grid", gap: "10px" }}>
+                        <Field label="Choose New Vault Password" hint="At least 8 characters · used for in-browser encryption">
+                          <input
+                            type="password"
+                            value={password}
+                            onChange={(e) => setPassword(e.target.value)}
+                            placeholder="••••••••••••"
+                            autoComplete="new-password"
+                          />
+                        </Field>
+                        <div className="buttonRow">
+                          <button onClick={onCreateIdentity} disabled={!!busy || password.length < 8} className={replaceArmed ? "primary" : ""}>
+                            {replaceArmed ? "CONFIRM NEW DID REPLACEMENT" : "CREATE NEW DID (RESET)"}
+                          </button>
+                          {replaceArmed && <button onClick={() => setReplaceArmed(false)}>CANCEL</button>}
+                        </div>
+                        {replaceArmed && <p className="notice danger">Replacing your identity will overwrite the local vault. Make sure you exported your current backup first.</p>}
+                      </div>
+                    )}
                   </div>
                 </details>
               </div>
@@ -908,26 +1482,101 @@ export default function Studio() {
                   <span>GET STARTED</span>
                   <b>NO VAULT FOUND</b>
                 </div>
-                <p className="notice">
-                  No local vault found in this browser. Create a new Ed25519 `did:key` identity or import an existing encrypted backup JSON.
-                </p>
-                <Field label="Choose Vault Password" hint="At least 8 characters · used for in-browser PBKDF2/AES encryption">
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="••••••••••••"
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <div className="buttonRow">
-                  <button className="primary" onClick={onCreateIdentity} disabled={!!busy || password.length < 8}>
-                    {busy === "identity" ? "CREATING..." : "CREATE NEW DID"}
+
+                <div className="startNavTabs" role="tablist" style={{ marginTop: "4px" }}>
+                  <button
+                    type="button"
+                    className={startTab === "create" ? "active" : ""}
+                    onClick={() => setStartTab("create")}
+                  >
+                    ✨ CREATE NEW DID
                   </button>
-                  <button onClick={chooseBackup} disabled={!!busy}>
-                    IMPORT BACKUP JSON
+                  <button
+                    type="button"
+                    className={startTab === "import_raw" ? "active" : ""}
+                    onClick={() => setStartTab("import_raw")}
+                  >
+                    🔑 IMPORT PRIVATE KEY (HEX)
+                  </button>
+                  <button
+                    type="button"
+                    className={startTab === "import_json" ? "active" : ""}
+                    onClick={() => setStartTab("import_json")}
+                  >
+                    📦 IMPORT JSON BACKUP
                   </button>
                 </div>
+
+                {startTab === "create" ? (
+                  /* TAB 1: CREATE BRAND NEW IDENTITY */
+                  <div style={{ display: "grid", gap: "14px" }}>
+                    <p className="notice">
+                      Generate a fresh <strong>Ed25519 `did:key`</strong> identity. Your private key never leaves this browser and is encrypted locally with your password.
+                    </p>
+                    <Field label="Choose Vault Password" hint="At least 8 characters · used for in-browser PBKDF2/AES encryption">
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        autoComplete="new-password"
+                      />
+                    </Field>
+                    <div className="buttonRow">
+                      <button className="primary" onClick={onCreateIdentity} disabled={!!busy || password.length < 8}>
+                        {busy === "identity" ? "CREATING..." : "GENERATE & ENCRYPT NEW DID"}
+                      </button>
+                    </div>
+                  </div>
+                ) : startTab === "import_raw" ? (
+                  /* TAB 2: IMPORT RAW 64-CHAR HEX PRIVATE KEY */
+                  <form onSubmit={(e) => { e.preventDefault(); void onImportRawKey(); }} style={{ display: "grid", gap: "14px" }}>
+                    <p className="notice">
+                      Import an existing <strong>64-character Hex Private Key</strong> from an external Python script, ElizaOS bot, or another Web3 tool. We will derive your <code>did:key</code> and encrypt it locally with your password.
+                    </p>
+                    <Field label="Raw Private Key (64-character Hex Seed)" hint="Standard 32-byte Ed25519 private seed in hexadecimal">
+                      <input
+                        type="text"
+                        value={rawKeyInput}
+                        onChange={(e) => setRawKeyInput(e.target.value)}
+                        placeholder="e.g. 4f8a12e3c0d7b8a9... (64 hex chars)"
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoFocus
+                      />
+                    </Field>
+                    <Field label="Choose Local Vault Password" hint="At least 8 characters · protects this key in your browser">
+                      <input
+                        type="password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="••••••••••••"
+                        autoComplete="new-password"
+                      />
+                    </Field>
+                    <div className="buttonRow">
+                      <button
+                        type="submit"
+                        className="primary"
+                        disabled={!!busy || !rawKeyInput.trim() || password.length < 8}
+                      >
+                        {busy === "import_raw" ? "IMPORTING..." : "IMPORT & ENCRYPT PRIVATE KEY"}
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  /* TAB 3: IMPORT ENCRYPTED JSON BACKUP */
+                  <div style={{ display: "grid", gap: "14px" }}>
+                    <p className="notice">
+                      Restore a previously exported <code>trace-core-identity-backup.json</code> file.
+                    </p>
+                    <div className="buttonRow">
+                      <button className="primary" onClick={chooseBackup} disabled={!!busy}>
+                        CHOOSE BACKUP JSON FILE
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
@@ -949,124 +1598,162 @@ export default function Studio() {
         {activeMode === "chat" && (
           <ModePanel id="chat" title="SIGNED CHAT" eyebrow="Technocore Live Rooms & DID Explorer" tabId="tab-chat" wide>
             <div className={`chatContainer ${isChatFullscreen ? "fullscreenMode" : ""}`}>
-              {/* Sub Navigation Switcher */}
-              <div className="chatSubNav" role="tablist" aria-label="Chat and Explorer views">
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={chatSubView === "room"}
-                  className={chatSubView === "room" ? "active" : ""}
-                  onClick={() => setChatSubView("room")}
-                >
-                  ● LIVE ROOM (/r/{room})
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  aria-selected={chatSubView === "explorer"}
-                  className={chatSubView === "explorer" ? "active" : ""}
-                  onClick={() => {
-                    setChatSubView("explorer");
-                    if (did && !explorerDidInput) {
-                      setExplorerDidInput(did);
-                    }
-                  }}
-                >
-                  🔍 DID EXPLORER & MESSAGE HISTORY
-                </button>
-              </div>
+              {/* BAR 1: TOP LEVEL COMMAND HUD */}
+              <div className="chatCommandBar">
+                {/* Left: View Switcher (LIVE ROOM vs DID EXPLORER) */}
+                <div className="chatMainTabs" role="tablist" aria-label="Chat and Explorer tabs">
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={chatSubView === "room"}
+                    className={`mainTabBtn ${chatSubView === "room" ? "active" : ""}`}
+                    onClick={() => setChatSubView("room")}
+                  >
+                    <span className="liveDotSmall" />
+                    ROOM /r/{room}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={chatSubView === "explorer"}
+                    className={`mainTabBtn ${chatSubView === "explorer" ? "active" : ""}`}
+                    onClick={() => {
+                      setChatSubView("explorer");
+                      if (did && !explorerDidInput) {
+                        setExplorerDidInput(did);
+                      }
+                    }}
+                  >
+                    DID EXPLORER
+                  </button>
+                </div>
 
-              {chatSubView === "room" ? (
-                <>
-                  {/* Row 1: Room Selector & Action Buttons */}
-                  <div className="chatToolbar">
-                    <div className="roomInputWrap">
-                      <span className="roomPrefix">/r/</span>
-                      <input
-                        value={room}
-                        onChange={(e) => setRoom(e.target.value.toLowerCase().trim())}
-                        maxLength={48}
-                        aria-invalid={!roomReady}
-                        placeholder="room-name"
-                      />
-                    </div>
-                    
-                    <div className="chatToolbarActions">
+                {/* Center: Network Substrate Metrics */}
+                <div className="compactNetStats">
+                  <span className="netStatusBadge">LIVE</span>
+                  <span>ROOMS: <b>{netStats.activeRooms.toLocaleString()}</b></span>
+                  <span>STORAGE: <b>{netStats.storedBytes}</b></span>
+                </div>
+
+                {/* Right: Primary Command Actions */}
+                <div className="commandBarActions">
+                  <button
+                    type="button"
+                    className="hudBtn accent"
+                    onClick={() => {
+                      setIsRoomsModalOpen(true);
+                      setRoomsModalTab("create");
+                    }}
+                  >
+                    [+] NEW ROOM
+                  </button>
+                  <button
+                    type="button"
+                    className="hudBtn"
+                    onClick={() => {
+                      setIsRoomsModalOpen(true);
+                      setRoomsModalTab("browse");
+                      void loadRoomsSummary();
+                    }}
+                  >
+                    BROWSE ROOMS ↗
+                  </button>
+                  {chatSubView === "room" && (
+                    <>
                       <button
                         type="button"
-                        className="syncBtn"
+                        className="hudBtn sync"
                         onClick={() => void loadChat(false, false)}
                         disabled={chatLoading || !roomReady}
                         title="Synchronize room messages"
                       >
-                        <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <svg className={`syncIcon ${chatLoading ? "spinning" : ""}`} viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
                         </svg>
                         <span>{chatLoading ? "SYNCING..." : "SYNC"}</span>
                       </button>
-
                       <button
                         type="button"
-                        className="expandChatBtn"
+                        className="hudBtn"
                         onClick={() => setIsChatFullscreen((v) => !v)}
-                        title={isChatFullscreen ? "Exit Fullscreen (Esc)" : "Expand to Fullscreen"}
+                        title={isChatFullscreen ? "Exit Fullscreen" : "Fullscreen"}
                       >
-                        {isChatFullscreen ? "🗗 EXIT" : "⛶ FULLSCREEN"}
+                        {isChatFullscreen ? "EXIT FULLSCREEN" : "FULLSCREEN"}
                       </button>
-                    </div>
-                  </div>
+                    </>
+                  )}
+                </div>
+              </div>
 
-                  {/* Row 2: Dedicated Quick Room Chips */}
-                  <div className="chatPillsRow" aria-label="Quick room selection">
-                    <span className="pillsLabel">ROOMS:</span>
-                    <div className="quickRooms">
-                      <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
-                      <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
-                      <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
-                      {MAILBOX_PATTERN.test(mailbox) && (
-                        <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#my-mailbox</button>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Row 3: Unified Filters + Search + Compact Live Status */}
-                  <div className="chatControlBar">
-                    <div className="chatFiltersGroup" role="group" aria-label="Message filters">
-                      {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
-                        <button
-                          key={filter}
-                          className={chatFilter === filter ? "active" : ""}
-                          onClick={() => setChatFilter(filter)}
-                          disabled={filter === "mine" && !did}
-                        >
-                          {filter === "all" ? "ALL" : filter === "signed" ? "SIGNED ONLY" : "MY MESSAGES"}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="chatSearchWrap">
-                      <input
-                        type="text"
-                        value={chatSearch}
-                        onChange={(e) => setChatSearch(e.target.value)}
-                        placeholder="Search messages or DIDs..."
-                      />
-                      {chatSearch && (
-                        <button className="clearSearch" onClick={() => setChatSearch("")} aria-label="Clear search">✕</button>
-                      )}
+              {chatSubView === "room" ? (
+                <>
+                  {/* BAR 2: SECONDARY CONTROL STRIP (ROOMS + FILTERS + SEARCH) */}
+                  <div className="chatControlStrip">
+                    {/* Left: Room Selector & Popular Chips */}
+                    <div className="roomSelectorBlock">
+                      <div className="roomInputBox">
+                        <span className="roomPrefix">/r/</span>
+                        <input
+                          value={room}
+                          onChange={(e) => setRoom(e.target.value.toLowerCase().trim())}
+                          maxLength={48}
+                          aria-invalid={!roomReady}
+                          placeholder="room-name"
+                        />
+                      </div>
+                      <div className="fastRoomChips">
+                        <button className={room === "lobby" ? "active" : ""} onClick={() => setRoom("lobby")}>#lobby</button>
+                        <button className={room === "technocore" ? "active" : ""} onClick={() => setRoom("technocore")}>#technocore</button>
+                        <button className={room === "events" ? "active" : ""} onClick={() => setRoom("events")}>#events</button>
+                        {MAILBOX_PATTERN.test(mailbox) && (
+                          <button className={room === mailbox ? "active" : ""} onClick={() => setRoom(mailbox)}>#mailbox</button>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="chatStatusPill" title={chatUpdatedAt ? `Last synchronized at ${chatUpdatedAt}` : "Connecting..."}>
-                      <span className="liveDot" />
-                      <span className="pillMsgs">{visibleMessages.length} msgs</span>
-                      <span className="pillTime">{chatUpdatedAt || "connecting"}</span>
+                    {/* Right: Message Filter Tabs + Search + Count */}
+                    <div className="filterSearchBlock">
+                      <div className="filterSegmentGroup" role="group" aria-label="Message filters">
+                        {(["all", "signed", "mine"] as ChatFilter[]).map((filter) => (
+                          <button
+                            key={filter}
+                            className={`filterSegmentBtn ${chatFilter === filter ? "active" : ""}`}
+                            onClick={() => setChatFilter(filter)}
+                            disabled={filter === "mine" && !did}
+                          >
+                            {filter === "all" ? "ALL" : filter === "signed" ? "SIGNED" : "MINE"}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="searchBox">
+                        <input
+                          type="text"
+                          value={chatSearch}
+                          onChange={(e) => setChatSearch(e.target.value)}
+                          placeholder="Filter..."
+                        />
+                        {chatSearch && (
+                          <button className="clearSearchBtn" onClick={() => setChatSearch("")} aria-label="Clear">✕</button>
+                        )}
+                      </div>
+
+                      <div className="liveMsgCount">
+                        <span>{visibleMessages.length} msgs</span>
+                      </div>
                     </div>
                   </div>
 
                   {chatError && <p className="notice danger" role="alert">{chatError}</p>}
 
-                  {/* Chat Feed (Taller, High contrast, Responsive) */}
+                  {/* CHAT FEED (Animated Streaming Waterfall) */}
                   <div className="chatFeedContainer">
+                    {streamedLimit < visibleMessages.length && visibleMessages.length > 0 && (
+                      <div className="streamingFeedBanner">
+                        <span className="liveDotSmall" />
+                        <span>STREAMING TRANSMISSIONS ({displayedFeedMessages.length}/{visibleMessages.length})...</span>
+                      </div>
+                    )}
                     <div
                       ref={chatFeedRef}
                       className="chatFeed"
@@ -1078,22 +1765,26 @@ export default function Studio() {
                       ) : visibleMessages.length === 0 ? (
                         <div className="chatEmpty">No messages match this filter.</div>
                       ) : (
-                        visibleMessages.map((item) => {
+                        displayedFeedMessages.map((item, idx) => {
                           const signed = isSignedMessage(item);
                           const mine = !!did && item.from === did;
                           return (
                             <article
-                              className={`chatMessage ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
+                              className={`chatMessage streamIn ${mine ? "mine" : ""} ${item.pending ? "pending" : ""}`}
                               key={`${item.seq}-${item.from}`}
+                              style={{
+                                animationDelay: `${Math.min(idx % 12, 12) * 15}ms`,
+                              }}
                             >
                               <div className="messageMeta">
+                                <Identicon did={item.from} size={20} />
                                 <span className={`trustBadge ${signed ? "signed" : "unsigned"}`}>
                                   {item.pending ? "SENDING..." : signed ? "VERIFIED" : "UNSIGNED"}
                                 </span>
                                 <code
                                   className="clickableDid"
-                                  onClick={() => void copyToClipboard(item.from, "DID")}
-                                  title="Click to copy full DID"
+                                  onClick={() => void openDidProfileCard(item.from)}
+                                  title="Click to view Identity Card"
                                 >
                                   {shortIdentity(item.from)}
                                 </code>
@@ -1107,7 +1798,7 @@ export default function Studio() {
                       )}
                     </div>
 
-                    {/* Floating Jump to Bottom Button - Anchored right above composer */}
+                    {/* Floating Jump to Bottom Button */}
                     {hasUnreadBelow && (
                       <button
                         className="scrollBottomBtn"
@@ -1277,7 +1968,7 @@ export default function Studio() {
                             className="copyPillBtn"
                             onClick={() => void copyToClipboard(explorerResult.did, "DID")}
                           >
-                            📋 COPY DID
+                            COPY DID
                           </button>
                           <span style={{ color: "var(--muted)", fontSize: "10px", fontWeight: 700 }}>
                             Scanned at {explorerResult.inspectedAt}
@@ -1333,7 +2024,7 @@ export default function Studio() {
                               onClick={() => void copyToClipboard(explorerResult.parsedProfile?.mailbox || "", "Mailbox")}
                               title="Click to copy mailbox name"
                             >
-                              {explorerResult.parsedProfile.mailbox} 📋
+                              {explorerResult.parsedProfile.mailbox} [COPY]
                             </span>
                           ) : <span>—</span>}
                         </div>
@@ -1532,10 +2223,289 @@ export default function Studio() {
         <p>Technocore is public, world-writable and ephemeral. Never publish seeds, private keys, API keys, passwords or secrets.</p>
       </div>
     </footer>
+
+    {/* DID IDENTITY / PROFILE CARD MODAL */}
+    {activeProfileDid && (
+      <div className="didModalOverlay" onClick={() => setActiveProfileDid(null)}>
+        <div className="didCardModal" onClick={(e) => e.stopPropagation()}>
+          <div className="didCardModalHead">
+            <div className="didAvatarBlock">
+              <Identicon did={activeProfileDid} size={44} />
+              <div className="didCardTitleBlock">
+                <span>AGENT / IDENTITY CARD</span>
+                <code>{activeProfileDid}</code>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="modalCloseBtn"
+              onClick={() => setActiveProfileDid(null)}
+              aria-label="Close modal"
+            >
+              ✕
+            </button>
+          </div>
+
+          <div className="didCardGrid">
+            <div className="didCardGridItem">
+              <small>IDENTITY VERIFICATION</small>
+              <span>{DID_PATTERN.test(activeProfileDid) ? "Ed25519 VERIFIED ✓" : "UNAUTHENTICATED"}</span>
+            </div>
+            <div className="didCardGridItem">
+              <small>X (TWITTER)</small>
+              {profileCardData?.parsed?.x ? (
+                <a href={`https://x.com/${profileCardData.parsed.x.replace(/^@/, "")}`} target="_blank" rel="noreferrer">
+                  @{profileCardData.parsed.x.replace(/^@/, "")}
+                </a>
+              ) : (
+                <span>{profileCardData?.loading ? "LOOKING UP..." : "—"}</span>
+              )}
+            </div>
+            <div className="didCardGridItem">
+              <small>PROFILE / GITHUB</small>
+              {profileCardData?.parsed?.profile ? (
+                <a href={profileCardData.parsed.profile} target="_blank" rel="noreferrer">
+                  {profileCardData.parsed.profile}
+                </a>
+              ) : (
+                <span>{profileCardData?.loading ? "LOOKING UP..." : "—"}</span>
+              )}
+            </div>
+            <div className="didCardGridItem">
+              <small>UNLISTED MAILBOX</small>
+              {profileCardData?.parsed?.mailbox ? (
+                <span
+                  className="clickableDid"
+                  onClick={() => void copyToClipboard(profileCardData.parsed?.mailbox || "", "Mailbox")}
+                  title="Click to copy mailbox"
+                >
+                  {profileCardData.parsed.mailbox} [COPY]
+                </span>
+              ) : (
+                <span>{profileCardData?.loading ? "LOOKING UP..." : "—"}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="didCardActions">
+            <button
+              type="button"
+              className="copyPillBtn"
+              onClick={() => void copyToClipboard(activeProfileDid, "DID")}
+            >
+              COPY FULL DID
+            </button>
+
+            {profileCardData?.parsed?.mailbox && (
+              <button
+                type="button"
+                className="primary"
+                onClick={() => {
+                  const mb = profileCardData.parsed?.mailbox;
+                  if (mb) {
+                    setRoom(mb);
+                    setActiveProfileDid(null);
+                    setActiveMode("chat");
+                    setChatSubView("room");
+                    setFeedback({ ok: true, text: `Entered private mailbox /r/${mb}` });
+                  }
+                }}
+              >
+                DIRECT MESSAGE
+              </button>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setExplorerDidInput(activeProfileDid);
+                setActiveProfileDid(null);
+                setActiveMode("chat");
+                setChatSubView("explorer");
+                void onInspectDid(activeProfileDid);
+              }}
+            >
+              INSPECT IN EXPLORER ↗
+            </button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* TECHNOCORE ROOMS DIRECTORY & CREATOR MODAL */}
+    {isRoomsModalOpen && (
+      <div className="didModalOverlay" onClick={() => setIsRoomsModalOpen(false)}>
+        <div className="roomsModal" onClick={(e) => e.stopPropagation()}>
+          <div className="roomsModalHead">
+            <div>
+              <h3>TECHNOCORE ROOMS DIRECTORY</h3>
+              <span style={{ fontSize: "9px", color: "var(--muted)", fontWeight: 700 }}>
+                {roomsSummary?.activeRooms.toLocaleString() || "42,296"} ACTIVE ROOMS · {roomsSummary?.storedBytes || "373M"} STORED
+              </span>
+            </div>
+            <button type="button" className="modalCloseBtn" onClick={() => setIsRoomsModalOpen(false)}>✕</button>
+          </div>
+
+          <div className="roomsModalTabs">
+            <button
+              type="button"
+              className={roomsModalTab === "browse" ? "active" : ""}
+              onClick={() => setRoomsModalTab("browse")}
+            >
+              ACTIVE PUBLIC ROOMS ({roomsSummary?.rooms.length || 0})
+            </button>
+            <button
+              type="button"
+              className={roomsModalTab === "create" ? "active" : ""}
+              onClick={() => setRoomsModalTab("create")}
+            >
+              CREATE SPECIAL ROOM
+            </button>
+          </div>
+
+          <div className="roomsModalBody">
+            {roomsModalTab === "browse" ? (
+              <>
+                <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                  <input
+                    type="text"
+                    value={roomsSearch}
+                    onChange={(e) => setRoomsSearch(e.target.value)}
+                    placeholder="Filter active rooms by name or topic..."
+                    style={{ flex: 1, padding: "8px 12px", fontSize: "11px" }}
+                  />
+                  <button
+                    type="button"
+                    className="syncBtn"
+                    onClick={() => void loadRoomsSummary()}
+                    disabled={roomsLoading}
+                    title="Refresh rooms list"
+                  >
+                    {roomsLoading ? "REFRESHING..." : "REFRESH"}
+                  </button>
+                </div>
+
+                {/* Quick Category Filter Pills */}
+                <div className="roomFilterChips">
+                  {[
+                    { id: "all", label: "ALL ROOMS" },
+                    { id: "active", label: "TOP ACTIVE" },
+                    { id: "mailboxes", label: "MAILBOXES (mb-)" },
+                    { id: "private", label: "PRIVATE (p-)" },
+                    { id: "ephemeral", label: "EPHEMERAL (e-)" },
+                  ].map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      className={`roomFilterChip ${roomsCategory === c.id ? "active" : ""}`}
+                      onClick={() => setRoomsCategory(c.id as any)}
+                    >
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="roomCardsGrid">
+                  {filteredRooms.map((r) => (
+                    <div
+                      key={r.name}
+                      className="roomCardItem"
+                      onClick={() => {
+                        setRoom(r.name);
+                        setIsRoomsModalOpen(false);
+                        setActiveMode("chat");
+                        setChatSubView("room");
+                        setFeedback({ ok: true, text: `Switched to room /r/${r.name}` });
+                      }}
+                    >
+                      <div className="roomCardItemHead">
+                        <b>/r/{r.name}</b>
+                        <span className="roomKindTag">{r.kind}</span>
+                      </div>
+                      <div className="roomCardTopic">{r.topic || "No topic note published."}</div>
+                      <div className="roomCardStats">
+                        <span>SEQ #{r.seq.toLocaleString()}</span>
+                        <span>{r.size}</span>
+                        <span>{r.idle}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              /* Create Room Wizard */
+              <div style={{ display: "grid", gap: "14px" }}>
+                <div>
+                  <label style={{ font: "900 10px ui-monospace, monospace", color: "var(--muted)", textTransform: "uppercase" }}>
+                    1. Select Room Class / Privacy Level
+                  </label>
+                  <div className="presetTypesGrid" style={{ marginTop: "6px" }}>
+                    {[
+                      { id: "public", title: "Public Room", desc: "Listed in /rooms, open to anyone" },
+                      { id: "p-", title: "Unlisted (p-)", desc: "Private URL is capability, never indexed" },
+                      { id: "e-p-", title: "Ephemeral (e-p-)", desc: "15 min auto-pruned + unlisted" },
+                      { id: "mb-p-", title: "Mailbox (mb-p-)", desc: "Signed writes only, unlisted" },
+                      { id: "d-", title: "Gated Ownable (d-)", desc: "Claimable by DID owner" },
+                    ].map((preset) => (
+                      <div
+                        key={preset.id}
+                        className={`presetTypeCard ${newRoomKind === preset.id ? "selected" : ""}`}
+                        onClick={() => setNewRoomKind(preset.id as any)}
+                      >
+                        <b>{preset.title}</b>
+                        <p>{preset.desc}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label style={{ font: "900 10px ui-monospace, monospace", color: "var(--muted)", textTransform: "uppercase" }}>
+                    2. Room Name / Custom Slug (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={newRoomSlug}
+                    onChange={(e) => setNewRoomSlug(e.target.value)}
+                    placeholder="Leave blank for auto-generated 144-bit secure ID"
+                    style={{ width: "100%", marginTop: "4px", padding: "8px 12px", fontSize: "11px" }}
+                  />
+                  <small style={{ color: "var(--muted)", fontSize: "9px" }}>
+                    Generated Room: <code>/r/{generateRoomSlug(newRoomKind, newRoomSlug)}</code>
+                  </small>
+                </div>
+
+                <div>
+                  <label style={{ font: "900 10px ui-monospace, monospace", color: "var(--muted)", textTransform: "uppercase" }}>
+                    3. Initial Topic / Description Note (Optional)
+                  </label>
+                  <input
+                    type="text"
+                    value={newRoomTopic}
+                    onChange={(e) => setNewRoomTopic(e.target.value)}
+                    placeholder="e.g. AI Agent coordination workspace for FLOP..."
+                    style={{ width: "100%", marginTop: "4px", padding: "8px 12px", fontSize: "11px" }}
+                  />
+                </div>
+
+                <button
+                  type="button"
+                  className="primary"
+                  onClick={handleCreateRoom}
+                  style={{ height: "42px", marginTop: "8px" }}
+                >
+                  CREATE & ENTER ROOM ↗
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    )}
   </main>;
 }
 
-function ModePanel({ id, title, eyebrow, tabId, wide = false, children }: { id: Mode; title: string; eyebrow: string; tabId: string; wide?: boolean; children: React.ReactNode }) {
+function ModePanel({ id, title, eyebrow, tabId, wide = false, children }: { id: Mode; title: string; eyebrow: string; tabId: string; wide?: boolean; children: ReactNode }) {
   return (
     <article id={`mode-${id}`} role="tabpanel" aria-labelledby={tabId} className={`modePanel ${wide ? "wide" : ""}`}>
       <header>
@@ -1556,7 +2526,7 @@ function LockedNotice({ onStart, text }: { onStart: () => void; text: string }) 
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
     <label className="field">
       <div><span>{label}</span>{hint && <small>{hint}</small>}</div>

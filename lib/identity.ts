@@ -163,6 +163,24 @@ export async function seedToDid(seed: Uint8Array) {
   return `did:key:z${bs58.encode(multicodec)}`;
 }
 
+export function hexToSeed(hexInput: string): Uint8Array {
+  const clean = hexInput.trim().replace(/^0x/i, "").toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(clean)) {
+    throw new Error("Invalid Private Key: Expected a 64-character hexadecimal Ed25519 seed (32 bytes).");
+  }
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) {
+    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+export async function importIdentityFromHex(hexSeed: string) {
+  const seed = hexToSeed(hexSeed);
+  const did = await seedToDid(seed);
+  return { seed, did };
+}
+
 export async function createIdentity() {
   const seed = randomBytes(32);
   const did = await seedToDid(seed);
@@ -314,6 +332,20 @@ export function nextRoomNonce(did: string, room: string) {
   state[key] = next;
   localStorage.setItem(storageKey, JSON.stringify(state));
   return next.toString();
+}
+
+export function seedToHex(seed: Uint8Array): string {
+  return Array.from(seed).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+export function downloadText(filename: string, text: string) {
+  const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 export function downloadJson(filename: string, value: unknown) {

@@ -7,8 +7,8 @@ const NOTE_PATH = new RegExp(`^/kv/${NAME}/${NAME}$`);
 const READ_ONLY_PATHS = new Set(["/rooms", "/config", "/.well-known/agent.json"]);
 const MAX_WRAPPER_BYTES = 32 * 1024;
 const WINDOW_MS = 60_000;
-const READ_LIMIT = 60;
-const WRITE_LIMIT = 12;
+const READ_LIMIT = 300;
+const WRITE_LIMIT = 60;
 
 type Budget = { startedAt: number; reads: number; writes: number };
 const budgets = new Map<string, Budget>();
